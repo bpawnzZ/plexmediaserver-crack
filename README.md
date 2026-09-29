@@ -366,6 +366,11 @@ curl -s "http://10.189.74.101:32400/identity"
 # <MediaContainer ... version="1.43.0.10492-121068a07"></MediaContainer>
 ```
 
+Both halves of the pipeline work over the mesh: the server hardware-encodes
+(`encoder=h264_nvenc`, per the check in step 5) and the client decodes the stream
+normally. Streaming, transcoding and remote playback all behave the same as they
+do on the LAN.
+
 Then, from any device on the same network, open
 `http://10.189.74.101:32400/web`. In the Plex apps, add it as a manual connection
 (`10.189.74.101:32400`) — signing in with the same Plex account usually
@@ -395,10 +400,17 @@ nothing else. Leave them off.
   public-internet path via a port forward or Plex's relay, neither of which you
   are using. The red indicator is expected and means nothing here. Do not go
   chasing it with a manual port mapping or by enabling the relay.
-- **`allowDNS=1` hands your DNS to the network's managed resolver.** That is
-  fine, and it is what gives mesh hostnames, but it means an outage of that DNS
-  breaks name resolution on the whole machine. Set `allowDNS=0` if you would
-  rather keep your own resolver.
+- **DNS is a mesh dependency.** Here it is pinned globally for every container in
+  `/etc/docker/daemon.json` (`"dns": ["10.189.221.222"]`), and that resolver is
+  only reachable *over the mesh* — `ip route get 10.189.221.222` resolves through
+  `ztchcnaetg`. So when the VPN drops, containers lose name resolution along with
+  it. Plex itself is unaffected (it talks to IPs), but anything that resolves a
+  hostname inside a container is not. Point `dns` at a resolver reachable
+  without the tunnel if that bothers you.
+- **ZeroTier's own DNS management is inert here.** It drives `systemd-resolved`,
+  which is not installed on this host, so `allowDNS=1` does nothing and the
+  network advertises no resolver. The host's `/etc/resolv.conf` is a plain static
+  file, not a symlink.
 - **The client must be on the VPN too.** A browser on a friend's laptop that has
   not joined the network cannot reach `10.189.74.101`, which is the point.
 - **Bitrate still matters.** Remote playback that needs more than your tunnel
