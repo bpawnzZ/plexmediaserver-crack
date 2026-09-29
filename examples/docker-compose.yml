@@ -1,0 +1,46 @@
+services:
+  plex:
+    image: linuxserver/plex:1.43.0.10492-121068a07-ls297
+    container_name: plex
+    restart: unless-stopped
+    network_mode: host
+
+    # The nvidia runtime is required so the driver devices (/dev/nvidia*,
+    # /dev/dri/renderD128) are exposed to the container. Without it NVENC fails.
+    runtime: nvidia
+
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=000
+      - TZ=Etc/UTC
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      # "docker" lets Plex self-update on boot, which silently defeats the image
+      # tag above. Pin it to the same version if the tag is meaningful.
+      - VERSION=docker
+      # Uncomment to log whether the crack's signature scan matched.
+      # - PLEXCRACK_DEBUG=1
+
+    volumes:
+      # Media. Adjust to taste.
+      - /path/to/media:/media
+
+      # Plex config. Also holds plexmediaserver_crack.so and the patchelf binary
+      # that crack_plex.sh uses.
+      - ./plex:/config
+      - ./transcodes:/transcode
+      - /etc/localtime:/etc/localtime:ro
+
+      # Entrypoint and crack script. The entrypoint copies the NVIDIA driver
+      # libraries to where Plex Transcoder looks for them, then runs the crack.
+      - ./plex-entrypoint.sh:/plex-entrypoint.sh:ro
+      - .:/host-docker:ro
+
+    entrypoint: /plex-entrypoint.sh
+
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "3"

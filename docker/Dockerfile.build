@@ -1,0 +1,28 @@
+# Build plexmediaserver_crack.so against musl.
+#
+# Plex Media Server is a musl binary, so the preload library must be musl too.
+# Building on a glibc host produces a .so that will not load.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.build -o . .
+#
+# Output: ./plexmediaserver_crack.so
+
+FROM alpine:latest AS build
+
+RUN apk add --no-cache g++ make
+
+WORKDIR /src
+COPY linux/ /src/
+
+RUN g++ -shared -fPIC -O2 -std=c++17 \
+        -static-libstdc++ -static-libgcc \
+        -o /plexmediaserver_crack.so \
+        main.cpp hook.cpp -lrt
+
+# Sanity check: the result must depend on musl libc only.
+RUN readelf -d /plexmediaserver_crack.so | grep NEEDED \
+ && readelf -d /plexmediaserver_crack.so | grep -q 'libc.musl-x86_64.so.1'
+
+FROM scratch AS out
+COPY --from=build /plexmediaserver_crack.so /plexmediaserver_crack.so
