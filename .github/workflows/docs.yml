@@ -1,0 +1,31 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Config lives in .markdownlint.json at the repo root.
+      - run: npx --yes markdownlint-cli2 "**/*.md"
+
+  links:
+    name: link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # --offline: verify that every in-repo relative link resolves on disk.
+      # Remote URLs are skipped, so this never fails because a site is down.
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --no-progress --include-fragments=false "./*.md" "./docs/*.md" "./.github/**/*.md"
+          fail: true

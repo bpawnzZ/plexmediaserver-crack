@@ -1,0 +1,123 @@
+name: Hardware transcoding report
+description: Report whether hardware transcoding works on your setup — a pass is as valuable as a failure
+title: "[HW] Plex <version> on <GPU>: "
+labels: ["hardware-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form feeds [`COMPATIBILITY.md`](https://github.com/bpawnzZ/plexmediaserver-crack/blob/main/COMPATIBILITY.md).
+        Fill in as much as you can — every field makes your result easier to trust.
+
+        **Test validity matters more than the result.** Do not test by running
+        `Plex Transcoder` directly: it succeeds even on builds where hardware
+        transcoding is broken end to end. Drive a session through Plex Media
+        Server itself and read its decision from the log.
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      description: Did hardware transcoding work?
+      options:
+        - "✅ Works — hardware encoder in use"
+        - "❌ Fails — falls back to software (CPU)"
+        - "⚠️ Crack did not apply at all"
+    validations:
+      required: true
+
+  - type: input
+    id: plex-version
+    attributes:
+      label: Plex version (as reported by the container)
+      description: From Settings → General, or `docker exec plex /usr/lib/plexmediaserver/Plex\ Media\ Server --version`
+      placeholder: 1.43.0.10492-121068a07
+    validations:
+      required: true
+
+  - type: input
+    id: image-tag
+    attributes:
+      label: Image tag in your compose file
+      description: If this does not match the version above, your `VERSION` env var is overriding the pin — mention that.
+      placeholder: linuxserver/plex:1.43.0.10492-121068a07-ls297
+    validations:
+      required: true
+
+  - type: input
+    id: crack-md5
+    attributes:
+      label: md5sum of plexmediaserver_crack.so
+      description: Run `md5sum plex/plexmediaserver_crack.so`. The known-good Zydis build is `4d5dc96c8c7da383d84880b922935cd6`.
+      placeholder: 4d5dc96c8c7da383d84880b922935cd6
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      description: Model and PCI id. Run `docker exec plex nvidia-smi --query-gpu=name --format=csv,noheader`
+      placeholder: NVIDIA GeForce GTX 1070 (10de:1be1)
+    validations:
+      required: true
+
+  - type: input
+    id: driver
+    attributes:
+      label: NVIDIA host driver version
+      description: Run `docker exec plex nvidia-smi --query-gpu=driver_version --format=csv,noheader`
+      placeholder: "570.153.02"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: plex-pass
+    attributes:
+      label: Does the Plex account have a genuine Plex Pass?
+      description: The most valuable field on this form. A failure with a real pass is an upstream Plex bug, not a crack problem.
+      options:
+        - "No — relying on the crack"
+        - "Yes — genuine Plex Pass"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: The two decisive log lines
+      description: |
+        Run this and paste the output:
+        ```
+        docker exec plex grep -E "Used slots for|encoder=" \
+          "/config/Library/Application Support/Plex Media Server/Logs/Plex Media Server.log" | tail -3
+        ```
+        `Used slots for 10de:...` + `encoder=h264_nvenc` = pass.
+        `Used slots for CPU` + `encoder=libx264` = fail.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: needed
+    attributes:
+      label: patch verification and environment
+      description: |
+        Paste the output of:
+        ```
+        docker exec plex /config/patchelf --print-needed \
+          /usr/lib/plexmediaserver/lib/libsoci_core.so | head -1
+        ```
+        plus your `runtime:`, `entrypoint:` and any `NVIDIA_*` environment values.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Docker version, how the transcode was triggered, anything you tried or ruled out.
+    validations:
+      required: false

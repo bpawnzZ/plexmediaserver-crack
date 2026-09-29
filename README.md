@@ -17,9 +17,11 @@ Media Server's `libsoci_core.so` so that Plex's feature-entitlement check always
 returns `true` — enabling Plex Pass features (hardware transcoding, etc.) on a
 server whose account does not have a Plex Pass.
 
+[**📊 Compatibility matrix**](COMPATIBILITY.md) · [**🤝 Contributing**](CONTRIBUTING.md) · [**💬 Discussions**](https://github.com/bpawnzZ/plexmediaserver-crack/discussions) · [**🐛 Report a setup**](https://github.com/bpawnzZ/plexmediaserver-crack/issues/new?template=hardware-report.yml)
+
 > [!WARNING]
 > **Read this before you start.** This crack works on **Plex 1.43.0**. It does
-> **not** work on 1.43.4 — see [Cracking the newer builds](#cracking-the-newer-builds)
+> **not** work on 1.43.4 — see [Cracking the newer builds](#-cracking-the-newer-builds)
 > for what was tried and where it stands. If you are on 1.43.4 and hardware
 > transcoding matters to you, **pin to 1.43.0**.
 
@@ -31,6 +33,10 @@ Paste the block below into your coding agent (Claude Code, Codex, Cursor, …).
 The prompt is self-contained: it carries the pinned version, the gotchas that
 silently produce an unpatched server, and a definition of done. Fill in the two
 paths first.
+
+Working **on this repo** rather than setting it up? Point your agent at
+[`AGENTS.md`](AGENTS.md) instead — it has the build and verify commands, the
+constraints, and the list of dead ends not to re-investigate.
 
 ````text
 Set up plexmediaserver_crack for my Plex Media Server in Docker.
@@ -117,7 +123,7 @@ files. Keep it, and take a hash so you know what you are running:
 md5sum plex/plexmediaserver_crack.so
 ```
 
-**Option B — build it.** See [Building the library](#building-the-library).
+**Option B — build it.** See [Building the library](#-building-the-library).
 Then copy the output, plus `patchelf`, into the config directory:
 
 ```sh
@@ -252,7 +258,7 @@ Failure modes to look for:
 | `ERROR: crack_plex.sh not found` | the `.:/host-docker:ro` mount is missing |
 | `❌ Crack library not found at /config/plexmediaserver_crack.so` | step 1 not done |
 | `❌ patchelf not found at /config/patchelf` | step 1, `patchelf` half not done |
-| _(nothing at all about the crack)_ | the `entrypoint:` is not set, so it never ran |
+| *(nothing at all about the crack)* | the `entrypoint:` is not set, so it never ran |
 
 Note that none of these stop Plex from starting — the entrypoint does not check
 the script's exit status, so a failed crack still ends in a running, **unpatched**
@@ -417,7 +423,7 @@ Keep signatures long enough to be unique.
 
 ---
 
-## 🕵️ Cracking the newer builds
+## 🧪 Cracking the newer builds
 
 Everything below was measured, not assumed. Full detail in
 [`docs/FINDINGS.md`](docs/FINDINGS.md).
@@ -506,7 +512,7 @@ deployment, and does not fix 1.43.4 either.
 
 ---
 
-## 🕳️ Gotchas
+## 🚧 Gotchas
 
 - **`Plex Transcoder` has a space in its name.** Shell quoting through
   `docker exec … bash -c "…"` mangles the path. Write a script file and
@@ -528,7 +534,32 @@ deployment, and does not fix 1.43.4 either.
 
 ---
 
-## 🗂️ Repo layout
+## 🤝 Get involved
+
+The most useful thing you can contribute is a **data point**. "It works on
+1.43.0" is one anecdote; the same result from ten independent setups is a fact.
+
+- **📊 [`COMPATIBILITY.md`](COMPATIBILITY.md)** — which Plex builds and GPUs are
+  known to work, from real reports.
+- **🐛 [Open a hardware report](https://github.com/bpawnzZ/plexmediaserver-crack/issues/new?template=hardware-report.yml)**
+  — a pass is as valuable as a failure. The form asks for exactly the fields that
+  make the result verifiable.
+- **🧪 [`docs/repro-1.43.4.md`](docs/repro-1.43.4.md)** — the fixed protocol for
+  the open question: is 1.43.4 broken because of Plex or because of the crack?
+- **💬 [Discussions](https://github.com/bpawnzZ/plexmediaserver-crack/discussions)**
+  — setup help, troubleshooting, and ideas. Issues are for reports with data.
+- **📖 [`CONTRIBUTING.md`](CONTRIBUTING.md)** — build, test, and what makes a
+  report acceptable.
+
+Cracking a newer Plex build is the open problem here, and the highest-value lead
+is that the **Zydis-based** crack variant — the one that actually works on
+1.43.0 — does not appear to have published source. Finding it matters more than
+anything else in this repo. See
+[Cracking the newer builds](#-cracking-the-newer-builds).
+
+---
+
+## 📁 Repo layout
 
 | Path | What it is |
 |---|---|
@@ -538,6 +569,16 @@ deployment, and does not fix 1.43.4 either.
 | `examples/plex-entrypoint.sh` | Entrypoint showing how the crack is wired in |
 | `examples/docker-compose.yml` | Compose service showing the required mounts |
 | `docs/FINDINGS.md` | Full write-up of the 1.43.4 investigation |
+| `docs/repro-1.43.4.md` | Fixed protocol for reproducing the 1.43.4 regression |
+| `COMPATIBILITY.md` | The compatibility matrix — working and broken setups |
+| `AGENTS.md` | Build/verify commands and constraints, for AI coding agents |
+| `CONTRIBUTING.md` | How to contribute, and what counts as done |
+
+**Canonical repo:** this repo lives on
+[GitHub](https://github.com/bpawnzZ/plexmediaserver-crack). Issues, Discussions
+and pull requests belong there.
+[gitgud](https://gitgud.io/bpawnz/plexmediaserver_crack_updated) is a read-only
+mirror; do not open issues on it.
 
 This is a documentation-and-tooling fork; upstream is the authority on the
 library itself. Commit messages follow

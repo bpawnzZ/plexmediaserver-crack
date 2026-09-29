@@ -1,0 +1,59 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build .so (musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # make builds through docker/Dockerfile.build and runs `make verify`,
+      # which fails the build if the output is not a musl binary.
+      - name: Build and verify
+        run: make
+
+      - name: Assert the result cannot be a glibc build
+        run: |
+          readelf -d plexmediaserver_crack.so | grep NEEDED
+          if readelf -d plexmediaserver_crack.so | grep -q 'libc\.so\.6'; then
+            echo "::error::plexmediaserver_crack.so is linked against glibc — it will not load into Plex"
+            exit 1
+          fi
+          ls -l plexmediaserver_crack.so
+          md5sum plexmediaserver_crack.so
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plexmediaserver_crack.so
+          path: plexmediaserver_crack.so
+          if-no-files-found: error
+
+  release:
+    name: attach to release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: plexmediaserver_crack.so
+
+      - name: Attach the artifact to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" plexmediaserver_crack.so --clobber

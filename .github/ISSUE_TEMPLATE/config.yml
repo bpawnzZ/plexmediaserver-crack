@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Ask a question / troubleshoot
+    url: https://github.com/bpawnzZ/plexmediaserver-crack/discussions
+    about: Setup problems, "the crack did not apply", general questions. Issues are for reports with data.
+  - name: 📖 Read the docs before posting
+    url: https://github.com/bpawnzZ/plexmediaserver-crack/blob/main/docs/FINDINGS.md
+    about: Several obvious hypotheses have already been tested and ruled out. This saves everyone a round trip.
+  - name: 📊 Working configurations
+    url: https://github.com/bpawnzZ/plexmediaserver-crack/blob/main/COMPATIBILITY.md
+    about: Check whether your Plex version is already known to work or fail, before reporting.
