@@ -27,5 +27,5 @@ jobs:
       # Remote URLs are skipped, so this never fails because a site is down.
       - uses: lycheeverse/lychee-action@v2
         with:
-          args: --offline --no-progress --include-fragments=false "./*.md" "./docs/*.md" "./.github/**/*.md"
+          args: --offline --no-progress "./*.md" "./docs/*.md" "./.github/**/*.md"
           fail: true
