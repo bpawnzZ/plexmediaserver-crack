@@ -332,6 +332,82 @@ few seconds, then run the grep above.
 
 ---
 
+## 🌍 Remote access without a Plex Pass
+
+Plex's own remote access needs a Plex Pass (or the rate-limited relay). You do
+not need either. Put the server and your clients on a private VPN mesh and reach
+it at its mesh IP — **no port forward, nothing exposed to the internet.**
+
+This works well *because* of the crack, not in spite of it: hardware encoding
+keeps the stream small. A 1080p NVENC stream is roughly 4–8 Mbit/s, which any VPN
+tunnel carries comfortably — where direct-playing a 40 Mbit/s remux would not.
+That headroom is the difference between one remote stream and several.
+
+[ZeroTier](https://www.zerotier.com/), [Tailscale](https://tailscale.com/) and a
+personal WireGuard setup all work. The author uses ZeroTier; the steps below are
+the ones verified on this server.
+
+### ZeroTier — verified on this setup
+
+Server side, after joining your network in
+[ZeroTier Central](https://my.zerotier.com/) and authorising the node:
+
+```sh
+sudo zerotier-cli listnetworks
+# 200 listnetworks e543ff8059fc1912 <name> <mac> OK PRIVATE ztchcnaetg 10.189.74.101/16
+```
+
+That is the whole setup. There is nothing to configure for Plex — with
+`network_mode: host` the server already listens on every interface, so the mesh
+IP answers immediately:
+
+```sh
+curl -s "http://10.189.74.101:32400/identity"
+# <MediaContainer ... version="1.43.0.10492-121068a07"></MediaContainer>
+```
+
+Then, from any device on the same network, open
+`http://10.189.74.101:32400/web`. In the Plex apps, add it as a manual connection
+(`10.189.74.101:32400`) — signing in with the same Plex account usually
+auto-discovers it, but a manual connection is deterministic and does not depend
+on Plex's own discovery services.
+
+Installing the client is required, including on phones and TVs. Tailscale's
+mobile apps are the more polished of the two if that matters to you.
+
+### What actually has to be in place
+
+| Requirement | Why | Where it was set here |
+|---|---|---|
+| Node joined **and authorised** | an unauthorised node gets an interface but no route | ZeroTier Central → Members |
+| `allowManaged=1` | lets ZeroTier assign the mesh address | `networks.d/<nwid>.local.conf` |
+| `allowGlobal=0`, `allowDefault=0` | keeps ZeroTier out of your default route and global traffic — mesh only | same file |
+| Firewall permits the mesh interface | UFW's default is deny-incoming | `ufw allow in on ztchcnaetg` |
+| `network_mode: host` in compose | otherwise `32400` is only reachable inside the container's own netns | compose file |
+
+`allowGlobal=0` and `allowDefault=0` are why this "just works" without touching
+any routing: ZeroTier adds its own `10.189.0.0/16` route and interface, and
+nothing else. Leave them off.
+
+### Gotchas
+
+- **Plex's "Remote Access" page will still say unavailable.** It is testing the
+  public-internet path via a port forward or Plex's relay, neither of which you
+  are using. The red indicator is expected and means nothing here. Do not go
+  chasing it with a manual port mapping or by enabling the relay.
+- **`allowDNS=1` hands your DNS to the network's managed resolver.** That is
+  fine, and it is what gives mesh hostnames, but it means an outage of that DNS
+  breaks name resolution on the whole machine. Set `allowDNS=0` if you would
+  rather keep your own resolver.
+- **The client must be on the VPN too.** A browser on a friend's laptop that has
+  not joined the network cannot reach `10.189.74.101`, which is the point.
+- **Bitrate still matters.** Remote playback that needs more than your tunnel
+  sustains will buffer. Cap the remote quality in the client rather than blaming
+  the GPU — check the `encoder=` line first to confirm the transcode is on the
+  hardware path at all.
+
+---
+
 ## 📌 Pin your version
 
 Both of these must be pinned, or the version you tested is not the version you
