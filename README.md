@@ -1,4 +1,11 @@
-# plexmediaserver_crack (updated fork)
+# 🎬 plexmediaserver_crack (updated fork)
+
+> *Plex Pass features without the Plex Pass bill.*
+
+![target: Plex 1.43.0](https://img.shields.io/badge/Plex-1.43.0_✅-brightgreen)
+![broken: 1.43.4](https://img.shields.io/badge/Plex-1.43.4_❌-red)
+![build: musl](https://img.shields.io/badge/build-musl_(Alpine)-blue)
+![license: MIT](https://img.shields.io/badge/license-MIT-lightgrey)
 
 A maintained fork of [`yuv420p10le/plexmediaserver_crack`](https://gitgud.io/yuv420p10le/plexmediaserver_crack)
 / the [`gmh5225` GitHub mirror](https://github.com/gmh5225/plexmediaserver_crack),
@@ -10,6 +17,7 @@ Media Server's `libsoci_core.so` so that Plex's feature-entitlement check always
 returns `true` — enabling Plex Pass features (hardware transcoding, etc.) on a
 server whose account does not have a Plex Pass.
 
+> [!WARNING]
 > **Read this before you start.** This crack works on **Plex 1.43.0**. It does
 > **not** work on 1.43.4 — see [Cracking the newer builds](#cracking-the-newer-builds)
 > for what was tried and where it stands. If you are on 1.43.4 and hardware
@@ -17,11 +25,26 @@ server whose account does not have a Plex Pass.
 
 ---
 
-## Quick start
+## 🚀 Quick start
 
-Five steps. Estimated 10 minutes.
+**Five steps. Ten minutes. One successful transcode.**
 
-### 1. Get the library
+```mermaid
+flowchart LR
+    A["1 · Drop .so<br/>+ patchelf"] --> B["2 · Entrypoint<br/>+ crack script"]
+    B --> C["3 · Compose<br/>+ runtime: nvidia"]
+    C --> D["4 · Boot<br/>+ read log"]
+    D --> E["5 · Verify<br/>h264_nvenc"]
+    E --> F(["🧠 GPU<br/>encoding"])
+    style A fill:#1f6feb,color:#fff
+    style B fill:#1f6feb,color:#fff
+    style C fill:#1f6feb,color:#fff
+    style D fill:#1f6feb,color:#fff
+    style E fill:#1f6feb,color:#fff
+    style F fill:#238636,color:#fff
+```
+
+### 📦 1. Get the library
 
 You need two files in your Plex config directory:
 
@@ -53,7 +76,7 @@ plex/                              # your Plex config dir, mounted at /config
 └── Library/ ...                   # normal Plex config, untouched
 ```
 
-### 2. Take the entrypoint
+### 🪝 2. Take the entrypoint
 
 Copy [`examples/plex-entrypoint.sh`](examples/plex-entrypoint.sh) next to your
 compose file:
@@ -90,7 +113,7 @@ Copy the crack script alongside it:
 cp scripts/crack_plex.sh .
 ```
 
-### 3. Add it to docker-compose
+### 🧩 3. Add it to docker-compose
 
 The three things that matter: the `nvidia` runtime, the entrypoint, and the
 mounts the entrypoint needs. Starting from
@@ -134,7 +157,7 @@ Two details that are easy to get wrong:
   `/host-docker/crack_plex.sh`. If that mount is missing, the entrypoint logs
   `ERROR: crack_plex.sh not found` and starts Plex without the crack.
 
-### 4. Start it and check the log
+### 🔥 4. Start it and check the log
 
 ```sh
 docker compose up -d
@@ -194,7 +217,7 @@ PLEXCRACK_DEBUG=1 docker compose up -d && docker compose logs plex | grep '\[cra
 `is_feature_available = 0` means the signature did not match (or matched more
 than once) and the hook was **not** applied.
 
-### 5. Confirm hardware transcoding actually works
+### ✅ 5. Confirm hardware transcoding actually works
 
 **Do not test by running `Plex Transcoder` directly.** A direct invocation
 
@@ -245,7 +268,65 @@ few seconds, then run the grep above.
 
 ---
 
-## Pin your version
+## 🤖 Hand this to your agent
+
+Paste the block below into your coding agent (Claude Code, Codex, Cursor, …).
+The prompt is self-contained: it carries the pinned version, the gotchas that
+silently produce an unpatched server, and a definition of done. Fill in the two
+paths first.
+
+````text
+Set up plexmediaserver_crack for my Plex Media Server in Docker.
+
+MY CONTEXT
+- Compose file / deploy dir: <absolute path, e.g. /home/me/docker/plex-crypt>
+- Media libraries: <absolute path(s) to bind-mount, e.g. /mnt/media>
+- Crack source: this repo, at <absolute path to this repo>
+
+HARD CONSTRAINTS — do not deviate
+- Pin Plex to 1.43.0.10492-121068a07-ls297. Do NOT use `latest` and do NOT bump
+  the tag: 1.43.4 breaks NVIDIA hardware transcoding independently of the crack.
+- `VERSION=` must equal the pinned version string. Never `VERSION=docker` — that
+  self-updates Plex on boot and silently walks past the pinned tag.
+- The crack library is built against musl. A glibc build will not load into
+  Plex's musl process. Verify with `readelf -d` before shipping it.
+- `runtime: nvidia` is required (not `deploy.resources`), so /dev/dri/renderD128
+  is exposed. Without it NVENC fails.
+
+WHAT TO DO
+1. Read the README's Quick start (steps 1-5) and docs/FINDINGS.md in full first.
+2. Lay out the config dir: `plexmediaserver_crack.so` + `patchelf` inside it.
+   Build the .so if I don't already have one — `make` handles the musl build.
+3. Copy `examples/plex-entrypoint.sh` and `scripts/crack_plex.sh` next to my
+   compose file; chmod +x both.
+4. Write/update my compose file with: the pinned image, `runtime: nvidia`,
+   `entrypoint: /plex-entrypoint.sh`, `.:/host-docker:ro`, and `./plex:/config`.
+   Preserve my existing volume mounts and PUID/PGID/TZ; only add what is missing.
+5. `docker compose up -d` and read `docker compose logs plex`. Confirm the log
+   shows the driver libs linked AND "✅ Crack applied inside container".
+6. Verify for real: trigger a transcode, then read Plex's decision from its log.
+   Do NOT test by running `Plex Transcoder` directly — it succeeds even on broken
+   builds and gives a false positive.
+
+DEFINITION OF DONE — all three, with the raw output pasted back to me
+a. `docker exec plex /config/patchelf --print-needed \
+      /usr/lib/plexmediaserver/lib/libsoci_core.so` lists plexmediaserver_crack.so
+b. Plex Media Server log shows `Used slots for 10de:<pci-id> ... is now 1`
+   (GPU slot, not `Used slots for CPU`)
+c. Plex Media Server log shows `encoder=h264_nvenc` (not `encoder=libx264`)
+
+REPORTING
+- A running container is NOT proof the crack applied. If any check in (a)-(c)
+  fails, say so explicitly and paste the failing output — do not report success.
+- Tell me every file you created or changed, and the exact commands you ran.
+- If the crack silently no-ops, re-run with `PLEXCRACK_DEBUG=1` and report what
+  `[crack] is_feature_available = ...` printed. If it is 0, the signature scan
+  missed and the hook was not applied.
+````
+
+---
+
+## 📌 Pin your version
 
 Both of these must be pinned, or the version you tested is not the version you
 run:
@@ -258,7 +339,7 @@ run:
 
 ---
 
-## Building the library
+## 🔨 Building the library
 
 The Plex Media Server process is a **musl** binary, so the crack must be built
 against musl (Alpine). A host glibc build produces a `.so` that will not load
@@ -291,7 +372,7 @@ readelf -d plexmediaserver_crack.so | grep NEEDED
 
 ---
 
-## How the crack works
+## 🧠 How the crack works
 
 `plexmediaserver_crack.so` gets loaded into the `Plex Media Server` process
 because it is added to the `DT_NEEDED` list of `libsoci_core.so`, which the
@@ -326,9 +407,9 @@ Wildcarding it makes one signature match exactly once on every build tested:
 
 | Plex version | Signature hits |
 |---|---|
-| 1.43.0 | 1 |
-| 1.43.3 | 1 |
-| 1.43.4 | 1 |
+| 1.43.0 | 1 ✅ |
+| 1.43.3 | 1 ✅ |
+| 1.43.4 | 1 ✅ |
 
 **More than one hit is treated as failure.** `sig_scan` returns `0` rather than
 guessing, so the hook is skipped instead of being applied to the wrong address.
@@ -336,7 +417,7 @@ Keep signatures long enough to be unique.
 
 ---
 
-## Cracking the newer builds
+## 🕵️ Cracking the newer builds
 
 Everything below was measured, not assumed. Full detail in
 [`docs/FINDINGS.md`](docs/FINDINGS.md).
@@ -397,12 +478,12 @@ Each of these was tested and is **not** the cause:
 Do not assume this repo's source reproduces a working deployment — they are not
 the same library:
 
-| | Installed / known-good | This repo's source |
+| | ✅ Installed / known-good | 📦 This repo's source |
 |---|---|---|
-| Size | 9.9 MB | ~2 MB |
-| Disassembler | **Zydis** | none |
-| Functions hooked | 4: `is_feature_available`, `map_find`, `bitset_init`, `is_user_feature_set` | 1: `is_feature_available` |
-| Embedded feature GUIDs | ~199 (incl. `hwtranscode`, `hardware_transcoding`, `transcode-hevc`, `transcode-tonemapping`) | 0 |
+| **Size** | 9.9 MB | ~2 MB |
+| **Disassembler** | **Zydis** | none |
+| **Functions hooked** | 4: `is_feature_available`, `map_find`, `bitset_init`, `is_user_feature_set` | 1: `is_feature_available` |
+| **Embedded feature GUIDs** | ~199 (incl. `hwtranscode`, `hardware_transcoding`, `transcode-hevc`, `transcode-tonemapping`) | 0 |
 
 The larger, Zydis-based variant is the one that works on 1.43.0 — because it also
 hooks the feature **bitset** (`hook_bitset_init`, `hook_is_user_feature_set`),
@@ -425,7 +506,7 @@ deployment, and does not fix 1.43.4 either.
 
 ---
 
-## Gotchas
+## 🕳️ Gotchas
 
 - **`Plex Transcoder` has a space in its name.** Shell quoting through
   `docker exec … bash -c "…"` mangles the path. Write a script file and
@@ -447,7 +528,7 @@ deployment, and does not fix 1.43.4 either.
 
 ---
 
-## Repo layout
+## 🗂️ Repo layout
 
 | Path | What it is |
 |---|---|
