@@ -4,15 +4,16 @@
 # musl — a host glibc build will not load. Requires Docker.
 
 OUT := plexmediaserver_crack.so
-IMAGE := plexcrack-build
 
 .PHONY: all clean verify
 
 all: $(OUT)
 
+# -o . takes the Dockerfile's `FROM scratch AS out` stage as a local output
+# directory. (`docker run ... cat` does not work: the output stage has no shell
+# and no coreutils.)
 $(OUT): linux/main.cpp linux/hook.cpp linux/hook.hpp
-	docker build -f docker/Dockerfile.build -t $(IMAGE) .
-	docker run --rm $(IMAGE) cat /plexmediaserver_crack.so > $(OUT)
+	docker build -f docker/Dockerfile.build -o . .
 	@$(MAKE) --no-print-directory verify
 
 verify:
