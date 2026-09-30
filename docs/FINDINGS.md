@@ -130,3 +130,179 @@ Open questions, in rough order of usefulness:
 3. Is the 1.43.4 behaviour reproducible on other NVIDIA setups with a legitimate
    Plex Pass? If so, it is an upstream bug and should be reported to Plex rather
    than worked around.
+
+---
+
+# Session 2026-09-29/30 — controlled A/B reproduction, root cause isolated
+
+All of the below is new, verified this session, on this host (workstation, GTX 1070
+Mobile `10de:1be1`, driver 570.153.02). Logs and binaries retained under
+`evidence/` and `work/bin/`.
+
+## Method (the two-server A/B)
+
+Both servers run **simultaneously**, both using the **same config copy of the prod
+library DB**, same host, same GPU, same known-good crack `.so`
+(md5 `4d5dc96c8c7da383d84880b922935cd6`):
+
+| | prod (`plex`) | test (`plex-test2`) |
+|---|---|---|
+| Image | `linuxserver/plex:1.43.0.10492-121068a07-ls297` | `linuxserver/plex:1.43.4.10903-e5521bd8c-ls326` |
+| Compose | `~/docker/plex-crypt/docker-compose.nvidia.yml` | `~/docker/plex-test2/docker-compose.yml` |
+| Port | `32400` | `32403` |
+| Network | host | `backend` (bridge) |
+| Config | `~/docker/plex-crypt/plex` | `~/docker/plex-test2/plex` (copy of the above) |
+
+Same request to both — HLS transcode of library item `9524` (h264 1080p, 50 fps,
+`/megaMedia/CathyBulgakova/Copy_of_IMG_4500.mp4`), `directPlay=0 directStream=0
+maxVideoBitrate=20000 videoResolution=1920x1080 protocol=hls hasMDE=1`:
+
+```sh
+curl -s -G "http://127.0.0.1:<port>/video/:/transcode/universal/start.m3u8" \
+  -H "X-Plex-Token: $TOKEN" -H "X-Plex-Client-Identifier: zzeta" \
+  -H "X-Plex-Platform: Chrome" -H "X-Plex-Product: Plex Web" \
+  --data-urlencode "path=/library/metadata/9524" \
+  --data-urlencode "mediaIndex=0" --data-urlencode "partIndex=0" \
+  --data-urlencode "protocol=hls" --data-urlencode "directPlay=0" \
+  --data-urlencode "directStream=0" --data-urlencode "maxVideoBitrate=20000" \
+  --data-urlencode "videoResolution=1920x1080" --data-urlencode "hasMDE=1" \
+  --data-urlencode "session=$SID"
+# then GET session/$SID/base/index.m3u8 and .../base/00000.ts to force the
+# transcoder to actually spawn and produce segments.
+```
+
+## Result — the §6 pass/fail pair, both servers, side by side
+
+`evidence/AB-decision.txt`:
+
+```
+### 1.43.0 (prod :32400) — PASS
+[Req#11b/Transcode] Streaming Resource: Adding session …  Used slots for 10de:1be1:1043:13f0@0000:01:00.0is now 1
+[Req#11b/Transcode] Streaming Resource: Reached Decision … Video=(… decision=transcode bitrate=17697 encoder=h264_nvenc …)
+
+### 1.43.4 (test :32403) — FAIL
+[Req#b9/Transcode/TPU] Streaming Resource: Adding session …  Used slots for CPUis now 1
+[Req#b9/Transcode/TPU] Streaming Resource: Reached Decision … Video=(… decision=transcode bitrate=17697 encoder=libx264 …)
+```
+
+The real `Plex Transcoder` argv confirms it (`evidence/1434-repro.txt`):
+1.43.4 spawns the job with `-codec:0 libx264`; the source-side filter graph still
+advertises `format=pix_fmts=yuv420p|nv12`, i.e. the binary knows about the GPU
+formats but does not pick the GPU encoder.
+
+## Finding 1 — the device/GPU is fully visible to 1.43.4 (rules out the easy causes)
+
+Inside **both** containers, `plex-test2` included, everything the probe needs is
+present and identical:
+
+```
+/proc/driver/nvidia/gpus/0000:01:00.0      present
+/sys/bus/pci/devices/0000:01:00.0/vendor   0x10de
+/sys/bus/pci/devices/0000:01:00.0/device   0x1be1
+/dev/nvidia0 /dev/nvidiactl /dev/nvidia-uvm … present
+/dev/dri/card0 /dev/dri/renderD128         present
+nvidia-smi -L   GPU 0: NVIDIA GeForce GTX 1070 …
+/usr/lib/plexmediaserver/lib/libcuda.so.1  present (71 MB)
+/usr/lib/plexmediaserver/lib/libnvidia-encode.so.1 present
+```
+
+So: not a missing device, not a missing driver lib, not the NVIDIA container
+toolkit, not the entrypoint's lib-linking, not the crack. 1.43.4 can see the GPU
+and simply **does not probe it**.
+
+## Finding 2 — 1.43.0 runs the capability probe; 1.43.4 never does
+
+1.43.0 startup, at decision time (`[Req#11b/Transcode]`):
+
+```
+Codecs: testing h264_nvenc (encoder)
+Codecs: hardware transcoding: testing API nvenc for device 'pci:0000:01:00.0' (NVIDIA GP104BM [GeForce GTX 1070 Mobile])
+[FFMPEG] - Loaded lib: libcuda.so.1
+[FFMPEG] - Loaded sym: NvEncodeAPICreateInstance
+Codecs: testing h264 (decoder) with hwdevice nvdec
+Codecs: hardware transcoding: testing API nvdec for device 'pci:0000:01:00.0' (NVIDIA GP104BM [GeForce GTX 1070 Mobile])
+TPU: hardware transcoding: using hardware decode accelerator nvdec
+TPU: hardware transcoding: final decoder: nvdec, final encoder: nvenc
+```
+
+1.43.4, same request: **not one of those lines appears.** No `testing h264_nvenc`,
+no `testing API nvenc`, no `Loaded lib: libcuda.so.1`. The probe is never entered,
+so `nvenc` never enters the encoder-candidate set, so the slot falls to `CPU`.
+The `CPU` slot is a **symptom of a skipped probe**, not a decision to use the CPU.
+
+## Finding 3 — the decision moved from `Transcode` to `Transcode/TPU`
+
+Same operation, log-namespace tag differs by version:
+
+| | 1.43.0 | 1.43.4 |
+|---|---|---|
+| Tag on "Adding session…/Reached Decision" | `[Req#11b/Transcode]` | `[Req#b9/Transcode/**TPU**]` |
+
+`TPU` is present in both binaries but trimmed in 1.43.4 (19 → 10 `TPU`-prefixed
+strings). The `TPU: ` prefix was stripped from the hardware-transcoding log
+format strings in 1.43.4 while the non-TPU `Codecs: hardware transcoding: testing
+API {}` format string is byte-identical in both (1.43.0 `@0x27311f`, 1.43.4
+`@0x27cb57`). This is the refactor footprint on exactly the code path under test.
+
+## Finding 4 — 1.43.4 tells the client it will use nvenc, then runs libx264
+
+Two layers disagree inside the *same* server. `Plex Transcoder Statistics.log`
+(`evidence/1434-variant-xml.txt`):
+
+```xml
+<Variant … transcodeHwRequested="1" transcodeHwDecoding="nvdec"
+         transcodeHwEncoding="nvenc" transcodeHwFullPipeline="1"> … </Variant>
+```
+
+…while the job the server actually launches is `-codec:0 libx264`. So the
+client-facing "can do nvenc" advertisement on 1.43.4 is not backed by the real
+encoder selection — consistent with Finding 2 (probe skipped, advertisement built
+from a different source).
+
+## Finding 5 — the crack, the `.so`, and the injection are all *not* the variable
+
+- Known-good `.so`, md5 `4d5dc96c8c7da383d84880b922935cd6`, loaded on both, via
+  the same `patchelf --add-needed plexmediaserver_crack.so` graft.
+- `libsoci_core.so` is **structurally identical across versions**: same size
+  223,560 bytes, same 18 `NEEDED` entries, only the BuildID differs. The patchelf
+  graft applies identically to both, and `patchelf --print-needed` on the
+  `plex-test2` container confirms `plexmediaserver_crack.so` at the top of the
+  list after boot.
+- 1.43.4's container exposes `/dev/dri/card0` + `renderD128` and the crack script
+  reports `✅ Crack applied inside container`.
+
+Conclusion: the regression is **inside the 1.43.4 `Plex Media Server` binary**, on
+the code path that decides whether to run the hardware capability probe. The
+crack's "lie about feature state" strategy is not what is being defeated — the
+gate has moved off the thing the crack patches, on this path.
+
+## Binary targets retained this session
+
+`work/bin/` holds `PMS-1.43.0`, `PMS-1.43.4`, `soci-1.43.0-clean.so`,
+`soci-1.43.4.so`. Relevant addresses touched (for the next session):
+
+| Item | 1.43.0 | 1.43.4 |
+|---|---|---|
+| `Codecs: hardware transcoding: testing API {}` fmt | str `0x27311f`, ref `0x10181fe` | str `0x27cb57` |
+| `… which is using transcoder slot.  Used slots for %sis now %d` | str `0x214764`, ref `0x104f012` | str `0x21c39e`, ref `0x10c2960` |
+| `FeatureManager::GetSingleton()` | `0xd9fe24` | `0xe04dfc` |
+| `TPU: hardware transcoding: final decoder: %s, final encoder: %s` | str `0x1e8c3c` | str `0x1ef876` |
+| `TPU: hardware transcoding: using hardware decode accelerator %s` | str `0x1e55d6` | str `0x1ec0fa` |
+
+## Open next step (unchanged priority)
+
+Diff the function that **calls** the `testing API {}` format string between the two
+versions and find what gates entry into the probe loop. Everything above says the
+probe function itself still exists in 1.43.4; the question is now "who stopped
+calling it / what guard now returns early", which is a bounded disassembly diff at
+`0x10181fe` (1.43.0) vs the equivalent site in 1.43.4.
+
+## Incident note for the operator
+
+The running prod container `plex` has `VERSION=docker` in its environment, which
+`AGENTS.md` §2 warns against because Plex self-updates on boot past the pin. It did
+**not** self-update this session (`/identity` still reports
+`1.43.0.10492-121068a07-ls297`), but it remains a latent hazard: any future boot
+with a published newer build will silently walk off the pinned version and
+invalidate the A/B baseline. The `plex-test2` compose correctly sets
+`VERSION=1.43.4.10903-e5521bd8c` instead.

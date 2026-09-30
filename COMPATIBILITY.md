@@ -18,13 +18,30 @@ Click the Plex version to see the reports behind a row.
 
 ## Verified broken
 
-| Plex | Bound to fail | Evidence |
-|---|---|---|
-| **1.43.4** | Both the single-function and the Zydis crack | `Used slots for CPU` + `encoder=libx264` with the same `.so` that works on 1.43.0 |
+| Plex | Image tag | GPU | Driver | Crack | Result | Evidence |
+|---|---|---|---|---|---|---|
+| **1.43.4** | `linuxserver/plex:1.43.4.10903-e5521bd8c-ls326` | GTX 1070 (10de:1be1) | 570.153.02 | Zydis variant, 9.9 MB, md5 `4d5dc96c8c7da383d84880b922935cd6` | ❌ `Used slots for CPU` + `encoder=libx264` | [AB run](docs/FINDINGS.md#session-2026-092930--controlled-ab-reproduction-root-cause-isolated), `evidence/AB-decision.txt` |
 
-The 1.43.4 regression is inside the Plex binary, not the crack. See
-[`README.md` #cracking-the-newer-builds](README.md#-cracking-the-newer-builds) and
-[`docs/FINDINGS.md`](docs/FINDINGS.md).
+Both the single-function and the Zydis crack fail on 1.43.4 with the **same `.so`**
+that works on 1.43.0. The regression is inside the Plex binary, not the crack.
+See [`README.md` #cracking-the-newer-builds](README.md#-cracking-the-newer-builds)
+and [`docs/FINDINGS.md`](docs/FINDINGS.md).
+
+### Why 1.43.4 fails — isolated mechanism (2026-09-30)
+
+The GPU is fully visible to 1.43.4 (`/proc/driver/nvidia/gpus/0000:01:00.0`,
+`/dev/nvidia*`, `/dev/dri/*`, `nvidia-smi`, `libcuda.so.1` all present in the
+container), yet 1.43.4 **never runs the hardware capability probe**. 1.43.0 logs
+`Codecs: testing h264_nvenc (encoder)` and `Codecs: hardware transcoding: testing
+API nvenc for device 'pci:0000:01:00.0'`; 1.43.4 logs **neither**, so `nvenc`
+never enters the candidate set and the slot falls to `CPU`. The `CPU` slot is a
+symptom of a skipped probe, not a CPU decision.
+
+Corroborating: the decision moved from the `Transcode` log namespace (1.43.0) to
+`Transcode/TPU` (1.43.4), and the `TPU: ` prefix was stripped from the
+hardware-transcoding log format strings in 1.43.4 — a refactor footprint on
+exactly this path. 1.43.4 also advertises `transcodeHwEncoding="nvenc"` to the
+client while actually launching `Plex Transcoder … -codec:0 libx264`.
 
 ## Signature scan results
 
@@ -35,7 +52,12 @@ failing scan is not the reason for the 1.43.4 regression:
 |---|---|---|
 | 1.43.0 | 1 ✅ | works |
 | 1.43.3 | 1 ✅ | untested end-to-end |
-| 1.43.4 | 1 ✅ | hook applies, hardware path still not taken |
+| 1.43.4 | 1 ✅ | hook applies, `libsoci_core.so` graft lands, hardware probe never runs |
+
+`libsoci_core.so` is structurally identical across 1.43.0 and 1.43.4 (same
+223,560-byte size, same 18 `NEEDED` entries, only BuildID differs), so the
+`patchelf --add-needed` graft applies identically to both. Injection is not the
+variable.
 
 ## Untested
 
