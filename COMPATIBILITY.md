@@ -80,6 +80,18 @@ hardware-transcode entitlement has to be restored at the layer 1.43.4 now
 consults — the filtered feature response and/or `FeatureManager`'s new
 `bool(bool)` predicate. That is a behavioural change, not an address patch.
 
+**Confirmed by experiment (2026-09-30):** the gate is the 1.43.4 *code path*, not
+the entitlement *data*. Copying prod's known-good entitlement caches
+(`CloudUsersF.dat`, `CloudUsersServices.dat`, `CloudUsersV2.dat`, `Flags.dat`)
+into the 1.43.4 container and restarting changed nothing — it still decides
+`Used slots for CPU is now 1` / `encoder=libx264`. 1.43.4 additionally
+*overwrites* `Flags.dat` on startup, i.e. it regenerates its feature cache from
+its own code path rather than consuming a supplied one. So no cache/account-data
+workaround exists; only a behavioural patch to the server's entitlement handling
+(`FeatureManager::f(bool)` and/or the narrowed `filterFeatures[]` request) can
+restore hardware transcoding. `CloudUsersF.dat` was byte-identical across both
+builds even before the test.
+
 ## Signature scan results
 
 The crack's AOB signature matches exactly once on each build tested, so a

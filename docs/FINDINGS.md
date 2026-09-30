@@ -611,13 +611,45 @@ consults (the filtered `/api/v2/server/users/features` response and/or whatever
 `FeatureManager::f(bool)` returns), which is a behavioural change, not an
 address patch.
 
+## Discriminating experiment (same day) — the gate is the CODE PATH, not the data
+
+The remaining fork was: is the gate in the entitlement **data** the server is
+given (fixable by supplying correct feature data), or in the 1.43.4 **code path**
+that consumes it (not fixable by data)?
+
+Method: copy prod's known-good entitlement caches
+(`CloudUsersF.dat`, `CloudUsersServices.dat`, `CloudUsersV2.dat`, `Flags.dat`)
+into `plex-test2`, restart, re-run the identical A/B request.
+
+Result:
+
+| | transcode slot | encoder |
+|---|---|---|
+| 1.43.0 (prod) | `10de:1be1:1043:13f0@0000:01:00.0` | `h264_nvenc` |
+| 1.43.4 + **prod's entitlement caches installed** | `CPU` | `libx264` |
+
+**Supplying prod's real entitlement data changed nothing.** Two corroborating
+observations: 1.43.4 *overwrites* `Flags.dat` on startup (prod's copy came back
+as the 1.43.4 value), and `CloudAccountV2.dat` is rewritten every boot — the
+server regenerates these from its own code path rather than consuming external
+ones.
+
+Note also that `CloudUsersF.dat` was **already byte-identical** (`e8d36cad…`) on
+both servers *before* this test — the primary cloud-features blob is the same on
+the working and broken builds.
+
+**Conclusion: the gate is the 1.43.4 code path.** Full artefact:
+`evidence/2026-09-30-entitlement-data-vs-code-path.txt`.
+
 ## Still open
 
-1. The two GUIDs absent from the crack's table (`ea791163-…`, `56cd352b-…`) are
-   unidentified. Resolve them against a current Plex feature dump to confirm
-   they are not hardware-related (they behave like client-UI flags).
-2. What exactly `FeatureManager::f(bool) -> bool` decides, and whether the
+1. What exactly `FeatureManager::f(bool) -> bool` decides, and whether the
    transcode path consults it. Bounded disassembly at the 1.43.4 bind site.
+   **This is now the only lead with a plausible port path.**
+2. The two GUIDs absent from the crack's table (`ea791163-…`, `56cd352b-…`).
+   Low value — they behave like client-UI flags and the experiment above shows
+   feature data is not the gate.
 3. Whether a legitimate Plex Pass account on 1.43.4 also loses hardware
    transcoding on this GPU. If it does, this is an upstream Plex bug and should
-   be reported rather than worked around.
+   be reported rather than worked around. (Answers "whose fault", not "can we
+   port".)

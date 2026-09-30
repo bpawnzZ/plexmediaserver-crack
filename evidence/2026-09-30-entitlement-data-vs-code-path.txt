@@ -1,0 +1,73 @@
+# Session 2026-09-30 (later) — the discriminating experiment: server-returned entitlement data is NOT the gate
+
+## The experiment
+
+Prod (1.43.0) has a *working* entitlement state — it decides `encoder=h264_nvenc`.
+1.43.4 does not. The open question was **which layer the gate is in**:
+
+- **(A)** the entitlement *data* the server receives/stores (fixable by supplying
+  correct feature data), or
+- **(B)** the 1.43.4 *code path* that consumes/derives it (not fixable by data).
+
+## Method
+
+Copy prod's known-good entitlement caches into the `plex-test2` container, restart,
+and re-run the identical A/B transcode request.
+
+Files copied (all from
+`/config/Library/Application Support/Plex Media Server/Cache/`):
+
+| file | size | md5 | note |
+|---|---|---|---|
+| `CloudUsersF.dat` | 192 | `e8d36cad495f134f1067e3273193ba37` | **byte-identical on both builds already** |
+| `CloudUsersServices.dat` | 3136 | — | |
+| `CloudUsersV2.dat` | 64 | — | |
+| `Flags.dat` | 9776 (prod) / 9936 (test2) | `e3cea60b…` | differs between builds |
+
+`CloudUsersF.dat` being byte-identical across the two servers *before* the test is
+itself a finding: the primary "cloud user features" blob is the same on the
+working and the broken server.
+
+## Result — decisive
+
+| | transcode slot | encoder |
+|---|---|---|
+| 1.43.0 (prod) | `10de:1be1:1043:13f0@0000:01:00.0` | `h264_nvenc` |
+| 1.43.4 (test2, **with prod's caches installed**) | `CPU` | `libx264` |
+
+Identical media item (9524), identical request parameters, both HTTP 200.
+
+**Supplying prod's real entitlement data changed nothing.** 1.43.4 still never
+enters the hardware-capability probe and still resolves the slot to `CPU`.
+
+Two corroborating observations from the same run:
+
+1. **1.43.4 overwrites `Flags.dat` on startup.** The installed copy
+   (`e3cea60b…`, prod's) came back as `cba41fed…` after restart. 1.43.4
+   *regenerates* that cache from its own code path; it does not consume an
+   externally supplied one.
+2. `CloudAccountV2.dat` is likewise rewritten on every boot (it is a live
+   account/session record, not static config).
+
+## Conclusion
+
+**The gate is (B): the 1.43.4 code path.** Not the feature data, not the caches,
+not the account state.
+
+This closes the fork. Porting the crack to 1.43.4 requires a behavioural patch to
+what the server does with the entitlement, i.e. the `FeatureManager` change
+(`bool f(bool)` — see the main 2026-09-30 evidence file §4a) and/or the narrowed
+`filterFeatures[]` request path. It is **not** achievable by:
+
+- refreshing the AOB signature (already matches exactly once in both builds),
+- correcting library paths or driver visibility (tested, identical),
+- supplying entitlement/feature cache data (this experiment),
+- changing `Preferences.xml` (differs by one unrelated key only).
+
+## Reversibility
+
+test2's entitlement caches were backed up to
+`~/.hermes/cache/scratch/ab-merge/backup/` before the test and
+restored after. Post-restore re-verification: test2 again decides
+`Used slots for CPU is now 1` / `encoder=libx264` — baseline behaviour. Prod was
+never modified.
