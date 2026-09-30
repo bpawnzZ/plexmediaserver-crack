@@ -306,3 +306,111 @@ The running prod container `plex` has `VERSION=docker` in its environment, which
 with a published newer build will silently walk off the pinned version and
 invalidate the A/B baseline. The `plex-test2` compose correctly sets
 `VERSION=1.43.4.10903-e5521bd8c` instead.
+
+---
+
+# Session 2026-09-29 (later) — root cause narrowed to a missing library, not the crack
+
+New this pass: the failure is visible **in the running process**, before any
+transcode is requested. No disassembly is needed to see it.
+
+## Method — read the live process maps
+
+Both servers were left running with the same known-good crack `.so`. For each,
+read `/proc/<pid>/maps` of the running `Plex Media Server` process (run the read
+as the Plex user — root is refused `/proc/<pid>/maps`):
+
+```sh
+docker exec -u abc <container> bash -c '
+  PID=$(pgrep -f "Plex Media Server" | head -1)
+  grep -c plexmediaserver_crack /proc/$PID/maps
+  grep -c libcuda              /proc/$PID/maps
+  grep -oE "[^ ]*libnvidia[^ ]*" /proc/$PID/maps | sort -u'
+```
+
+## Result — what is actually mapped in each server
+
+| Mapped into `Plex Media Server` | 1.43.0 (prod) | 1.43.4 (test) |
+|---|---|---|
+| `plexmediaserver_crack.so` | ✅ 5 segments | ✅ 5 segments |
+| `libcuda.so.1` | ✅ 6 segments | ✅ 6 segments |
+| `libnvidia-ml.so.1` | ✅ 3 segments | ❌ **absent** |
+| `libnvidia-encode.so.1` | ✅ present | ❌ **absent** |
+
+The crack is loaded on both. `libcuda.so.1` (the runtime driver) loads on both.
+But **`libnvidia-encode.so.1` — the NVENC encoder library — is never loaded in
+1.43.4**, and neither is `libnvidia-ml.so.1`.
+
+No NVENC library in the process ⇒ no `testing h264_nvenc` log line ⇒ `nvenc`
+never enters the encoder-candidate set ⇒ the transcode slot falls to `CPU` and
+the encoder is `libx264`. The earlier "probe is skipped" observation is the
+*symptom*; the missing library is the mechanism.
+
+## Corroboration in the server log
+
+Count of `nvidia|nvml|libcuda|nvenc|hardware transcode` lines in each server's
+own `Plex Media Server.log`:
+
+| | 1.43.0 (prod) | 1.43.4 (test) |
+|---|---|---|
+| matching lines | **12** | **0** |
+
+1.43.4's log does not mention NVIDIA, NVENC, libcuda or hardware transcoding
+**at all**. 1.43.0's shows the full sequence — `testing h264_nvenc (encoder)`,
+`testing API nvenc for device 'pci:0000:01:00.0'`, `[FFMPEG] - Loaded lib:
+libnvidia-encode.so.1`, `Loaded sym: NvEncodeAPICreateInstance`, and the real job
+with `-init_hw_device cuda=cuda:pci:0000:01:00.0 … scale_cuda … -codec:0
+h264_nvenc`.
+
+## Binary check — the loader code is unchanged
+
+The server binary's NVIDIA loader is byte-identical between builds. 1.43.4 does
+call `dlopen("libcuda.so.1", RTLD_LAZY)` and the same 7-entry `dlsym` chain:
+
+| | 1.43.0 | 1.43.4 |
+|---|---|---|
+| `dlopen(libcuda.so.1)` site | `0x10f1106` | `0x1165782` |
+| next failure check | `0f 84 59 01 00 00` (`je`) | `0f 84 59 01 00 00` (`je`) |
+
+`libnvidia-encode.so.1` appears as a string in **neither** binary — it is loaded
+by the bundled FFmpeg (the `[FFMPEG] - Loaded lib:` lines come from the decoder /
+transcoder plugin), not by the server. So the server-side loader is not where the
+two builds differ; the FFmpeg/transcoder side is where `libnvidia-encode.so.1`
+would have been pulled in and was not.
+
+## String-level footprint (unchanged from the prior session, still relevant)
+
+1.43.4 strips the `TPU: ` prefix from every hardware-transcode log format
+string (`TPU: hardware transcoding: final decoder: %s, final encoder: %s` →
+`hardware transcoding: final decoder: %s, final encoder: %s`), while the
+`Codecs: hardware transcoding: testing API {} for device '{}' ({})` format
+string is byte-identical in both (1.43.0 `@0x27311f`, 1.43.4 `@0x27cb57`), and
+the emit-block around it is byte-identical (same guards on the `+0xb8` / `+0x3f`
+bool fields, same `Log::GetSingleton` call, same line number `0x41` and level
+`0xddd`). The refactor is on the logging and the FFmpeg-side library load, not on
+the crack's patch target.
+
+## What this means for the crack's strategy
+
+The crack lies about feature entitlement (`is_feature_available` → `true`). That
+lie still lands — `hwtranscode` is reported available and the crack is mapped and
+running. What defeats it is downstream: with `libnvidia-encode.so.1` never
+loaded, the hardware encoder does not exist as an option regardless of what the
+entitlement check says. The gate that matters on 1.43.4 is the **library-load
+gate feeding the encoder-candidate list**, and it is not the function the crack
+patches.
+
+## Next step (narrowed)
+
+Find why 1.43.4's bundled FFmpeg/transcoder does not `dlopen`
+`libnvidia-encode.so.1` in this container when 1.43.0's does. Candidate checks,
+cheapest first:
+
+1. Whether `libnvidia-encode.so.1` resolves at all inside the 1.43.4 container
+   (it is present on disk — `/usr/lib/plexmediaserver/lib/libnvidia-encode.so.1`,
+   297,688 bytes — so a bare "missing file" is ruled out; the question is what
+   refuses to load it).
+2. Whether the encoder-candidate list in 1.43.4 is built from a capability query
+   that now returns "no encoder" before the load is attempted.
+3. Whether the 1.43.4 FFmpeg build gates NVENC behind a configure/runtime flag
+   the 1.43.0 build did not.

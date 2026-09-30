@@ -1,0 +1,16 @@
+# Process maps — libnvidia-encode / libnvidia-ml presence (2026-09-29)
+
+## 1.43.0 (prod, container 'plex', pid 283)
+plexmediaserver_crack        5
+libcuda                      6
+libnvidia                    3
+/usr/lib/plexmediaserver/lib/libnvidia-encode.so.1
+
+## 1.43.4 (test, container 'plex-test2', pid 334)
+plexmediaserver_crack        5
+libcuda                      6
+libnvidia                    0
+
+## server-log GPU line counts
+plex         12
+plex-test2   0
