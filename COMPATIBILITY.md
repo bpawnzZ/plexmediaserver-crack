@@ -92,6 +92,15 @@ workaround exists; only a behavioural patch to the server's entitlement handling
 restore hardware transcoding. `CloudUsersF.dat` was byte-identical across both
 builds even before the test.
 
+**Also tested and negative — RO-pinning (2026-09-30):** bind-mounting prod's
+`Flags.dat` **read-only** over the 1.43.4 path (write reliably blocked;
+`SafelyWriteFile: failed to write over "…/Flags.dat": Rename failed`) still
+decides `Used slots for CPU is now 1` / `encoder=libx264`. So `Flags.dat`'s
+content is not an input to the decision at all — it is derived output nothing
+reads back. Note the server writes it temp-file + rename, so an RO pin fails
+safely rather than corrupting state. No file-state manipulation (supply, pin, or
+protect) can restore hardware transcoding.
+
 ## Signature scan results
 
 The crack's AOB signature matches exactly once on each build tested, so a

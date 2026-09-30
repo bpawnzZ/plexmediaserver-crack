@@ -641,6 +641,37 @@ the working and broken builds.
 **Conclusion: the gate is the 1.43.4 code path.** Full artefact:
 `evidence/2026-09-30-entitlement-data-vs-code-path.txt`.
 
+## Third method — RO-pinning the file with prod's exact bytes (also negative)
+
+Tested the "pin the good file read-only so the write fails" approach directly,
+since it is strictly stronger than supplying a copy:
+
+1. prod's `Flags.dat` (`e3cea60b…`, 9776 B) bind-mounted **read-only** over
+   test2's target path (`mount --bind` + `-o remount,ro,bind`; `findmnt` confirms
+   `ro`, `touch` returns `Read-only file system`).
+2. Restarted test2, ran the standard A/B.
+
+Result: the write failed exactly as intended and **harmlessly** —
+
+```
+WARN  - Failed to rename ".../Flags.dat.tmp.e75d48b3-…" to ".../Flags.dat": Resource busy
+ERROR - SafelyWriteFile: failed to write over ".../Flags.dat": Rename failed
+```
+
+— server booted normally in 14 s, prod's bytes stayed pinned. **And the decision
+did not change: still `Used slots for CPU is now 1` / `encoder=libx264`.**
+
+So `Flags.dat`'s *content* is not an input to the transcode decision at all. The
+server writes it via temp-file + rename, which is why an RO pin fails safely
+rather than corrupting anything — useful if any future work needs to freeze Plex
+state files.
+
+Full artefact: `evidence/2026-09-30-ro-pinned-flags-dat.txt`.
+
+**This is the third independent method (after cache-copy and the
+derivation-fingerprint) confirming the gate is the 1.43.4 code path.** No
+file-state manipulation can restore hardware transcoding.
+
 ## Still open
 
 1. What exactly `FeatureManager::f(bool) -> bool` decides, and whether the
