@@ -1,0 +1,62 @@
+# Task C — formal "first divergence" startup/decision log diff
+#
+# Method: normalize both servers' Plex Media Server.log decision sequences
+# (timestamps, thread ids, Req# ids and ms stripped), then align on the
+# last common anchor line. Reproduced 2026-09-30 on a fresh A/B request
+# to item 9524 on both servers.
+#
+# Anchor line present in both, immediately before the divergence:
+#
+#   [Req#X/Transcode]  Streaming Resource: Attempting to create AdHoc transcode session <sid>
+#   [Req#X/Transcode]  MDE: Selected protocol hls; container: mpegts
+#
+# ---------------------------------------------------------------------------
+# 1.43.0 (prod, :32400) — GPU path
+# ---------------------------------------------------------------------------
+# [Req#X/Transcode] Streaming Resource: Attempting to create AdHoc transcode session abtest-prod-1430-...
+# [Req#X/Transcode] MDE: Selected protocol hls; container: mpegts
+# [Req#X/Transcode] Codecs: testing h264_nvenc (encoder)                        <-- PROBE ENTERED
+# [Req#X/Transcode] Codecs: hardware transcoding: testing API nvenc for device 'pci:0000:01:00.0' (NVIDIA GP104BM [GeForce GTX 1070 Mobile])
+# [Req#X/Transcode] [FFMPEG] - Loaded lib: libcuda.so.1
+# [Req#X/Transcode] [FFMPEG] - Loaded sym: cuInit
+#   ... (7-entry cu* dlsym chain) ...
+# [Req#X/Transcode] Codecs: testing h264 (decoder) with hwdevice nvdec
+# [Req#X/Transcode] Codecs: hardware transcoding: testing API nvdec for device 'pci:0000:01:00.0' (NVIDIA GP104BM [GeForce GTX 1070 Mobile])
+# [Req#X/Transcode] Codecs: Testing with profile 'Main'
+# [Req#X/Transcode] Streaming Resource: Adding session ... Used slots for 10de:1be1:1043:13f0@0000:01:00.0is now 2
+# [Req#X/Transcode] Streaming Resource: Reached Decision ... encoder=h264_nvenc
+# [Req#X/Transcode/<sid>] TPU: hardware transcoding: using hardware decode accelerator nvdec
+# [Req#X/Transcode/<sid>] TPU: hardware transcoding: zero-copy support present
+# [Req#X/Transcode/<sid>] TPU: hardware transcoding: using zero-copy transcoding
+# [Req#X/Transcode/<sid>] TPU: hardware transcoding: final decoder: nvdec, final encoder: nvenc
+#
+# ---------------------------------------------------------------------------
+# 1.43.4 (test, :32403) — CPU path
+# ---------------------------------------------------------------------------
+# [Req#X/Transcode/TPU] Streaming Resource: Attempting to create AdHoc transcode session abtest-test-1434-...
+# [Req#X/Transcode/TPU] MDE: Selected protocol hls; container: mpegts
+# ---- NOTHING HERE ----
+# [Req#X/Transcode/TPU] Streaming Resource: Adding session ... Used slots for CPUis now 1
+# [Req#X/Transcode/TPU] Streaming Resource: Reached Decision ... encoder=libx264
+#
+# ---------------------------------------------------------------------------
+# THE FIRST DIVERGENCE
+# ---------------------------------------------------------------------------
+#
+#   Line N+1 after "MDE: Selected protocol hls; container: mpegts":
+#
+#     1.43.0 emits       "Codecs: testing h264_nvenc (encoder)"
+#     1.43.4 emits       "Streaming Resource: Adding session ... Used slots for CPU is now 1"
+#
+#   i.e. the entire hardware-capability probe (7 log lines in 1.43.0) is
+#   absent in 1.43.4. The probe is not entered. Everything downstream follows
+#   deterministically from that one missing call.
+#
+# Also note the namespace difference on the SAME lines:
+#     1.43.0: [Req#X/Transcode]
+#     1.43.4: [Req#X/Transcode/TPU]
+# which is the refactor footprint (see §4c of the main evidence file).
+#
+# Corroborating counts (server's own log, nvidia|nvml|libcuda|nvenc|hardware transcode):
+#     1.43.0 = 12   |   1.43.4 = 0
+#

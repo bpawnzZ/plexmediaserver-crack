@@ -27,7 +27,7 @@ that works on 1.43.0. The regression is inside the Plex binary, not the crack.
 See [`README.md` #cracking-the-newer-builds](README.md#-cracking-the-newer-builds)
 and [`docs/FINDINGS.md`](docs/FINDINGS.md).
 
-### Why 1.43.4 fails — isolated mechanism (2026-09-30)
+### Why 1.43.4 fails — isolated mechanism (2026-09-30, refined)
 
 The GPU is fully visible to 1.43.4 (`/proc/driver/nvidia/gpus/0000:01:00.0`,
 `/dev/nvidia*`, `/dev/dri/*`, `nvidia-smi`, `libcuda.so.1` all present in the
@@ -37,11 +37,48 @@ API nvenc for device 'pci:0000:01:00.0'`; 1.43.4 logs **neither**, so `nvenc`
 never enters the candidate set and the slot falls to `CPU`. The `CPU` slot is a
 symptom of a skipped probe, not a CPU decision.
 
+**The library/loader/FFmpeg/build layers are all exonerated** (each tested
+2026-09-30, full detail in [`docs/FINDINGS.md`](docs/FINDINGS.md)):
+
+- the `.so` files exist and `ldd`/`ldconfig` resolve them in **both** containers;
+- `cuInit`/`cuDeviceGetCount` enumerate the GTX 1070 identically in **both**
+  (`pci=0000:01:00.0`), and `NvEncodeAPICreateInstance` resolves in **both**;
+- `avcodec_find_encoder_by_name("h264_nvenc")` returns `FOUND` in **both**;
+- the `Plex Transcoder` build `configuration:` string is **identical
+  option-for-option** between builds (`--enable-encoder=h264_nvenc` present in
+  both);
+- `Preferences.xml` is identical apart from one unrelated key;
+- the whole probe code path (probe emitter, loop driver, CUDA dlopen+dlsym
+  chain, hwdevice construction) is instruction-for-instruction equivalent.
+
+**What actually changed is entitlement resolution**, and there are two structural
+diffs, both new in 1.43.4:
+
+1. `FeatureManager` gained a `bool`-returning, `bool`-taking method
+   (`__bind<FeatureManager,bool(bool)>` exists only in 1.43.4, where 1.43.0 has
+   only `__bind<FeatureManager,void()>`).
+2. The feature fetch was narrowed from `%s/api/v2/server/users/features` to a
+   hard-coded five-GUID `filterFeatures[]` request (plus `/refreshFeatures`).
+   Those five GUIDs are `ios14-privacy-banner`, `custom-home-removal`,
+   `client-radio-stations`, and two not in the crack's 199-entry table —
+   **none of them is `hwtranscode`**.
+
+So the crack patches the *local* `is_feature_available` / bitset layer, and on
+1.43.4 that layer no longer gates the hardware path. The capability probe is
+never entered, `libnvidia-encode.so.1` and `libnvcuvid.so.1` are never dlopened
+(both are **absent** from the running 1.43.4 server's `/proc/<pid>/maps` while
+present in 1.43.0's), and the slot falls to `CPU`.
+
 Corroborating: the decision moved from the `Transcode` log namespace (1.43.0) to
 `Transcode/TPU` (1.43.4), and the `TPU: ` prefix was stripped from the
 hardware-transcoding log format strings in 1.43.4 — a refactor footprint on
 exactly this path. 1.43.4 also advertises `transcodeHwEncoding="nvenc"` to the
 client while actually launching `Plex Transcoder … -codec:0 libx264`.
+
+**Porting implication:** fixing 1.43.4 needs more than a refreshed signature. The
+hardware-transcode entitlement has to be restored at the layer 1.43.4 now
+consults — the filtered feature response and/or `FeatureManager`'s new
+`bool(bool)` predicate. That is a behavioural change, not an address patch.
 
 ## Signature scan results
 

@@ -1,0 +1,180 @@
+# Session 2026-09-30 — NVENC never loads: what was tested and what it proved
+#
+# Host: workstation, GTX 1070 Mobile 10de:1be1, driver 570.153.02
+# prod  plex       1.43.0.10492-121068a07-ls297  port 32400  host net   (Ubuntu 24.04.4)
+# test  plex-test2 1.43.4.10903-e5521bd8c-ls326  port 32403  bridge     (Ubuntu 26.04.1)
+# Both: known-good crack .so md5 4d5dc96c8c7da383d84880b922935cd6
+#
+# ============================================================================
+# 1. LIVE REPRODUCTION (both §6 markers, captured this session)
+# ============================================================================
+#
+# 1.43.0 (prod :32400) — PASS
+# [Req#d82/Transcode] Streaming Resource: Adding session ... Used slots for 10de:1be1:1043:13f0@0000:01:00.0is now 2
+# [Req#d82/Transcode] Reached Decision ... encoder=h264_nvenc
+#
+# 1.43.4 (test :32403) — FAIL
+# [Req#385/Transcode/TPU] Streaming Resource: Adding session ... Used slots for CPUis now 1
+# [Req#385/Transcode/TPU] Reached Decision ... encoder=libx264
+#
+# ============================================================================
+# 2. /proc/<pid>/maps of the RUNNING `Plex Media Server` (read as user abc)
+# ============================================================================
+#
+# mapped                     1.43.0 (prod)      1.43.4 (test)
+# ------------------------   ----------------   ----------------
+# plexmediaserver_crack.so   5 segments         5 segments
+# libcuda.so.1               6 segments         6 segments
+# libnvidia-encode.so.1      3 segments         ABSENT      <-- NVENC encoder
+# libnvcuvid.so.1            3 segments         ABSENT      <-- NVDEC/CUVID decoder
+# libnvidia-ml.so.1          ABSENT             ABSENT
+# total mapped regions       545                392
+#
+# Interpretation: both processes load the crack and the CUDA runtime. Only the
+# two NVENC/NVDEC *device* libraries differ. No NVENC/NVDEC library in the
+# process => no hw encoder candidate => slot resolves to literal 'CPU'.
+#
+# ============================================================================
+# 3. WHAT IS **NOT** THE CAUSE — each tested this session, all NEGATIVE
+# ============================================================================
+#
+# (a) Missing library file on disk        -> NO. Both containers have
+#     /usr/lib/plexmediaserver/lib/libnvidia-encode.so.1  (297688 bytes)
+#     /usr/lib/plexmediaserver/lib/libnvidia-ml.so.1      (2217944 bytes)
+#     /usr/lib/plexmediaserver/lib/libnvcuvid.so.1        (16522712 bytes)
+#
+# (b) Broken dynamic resolution           -> NO. ldd resolves cleanly in BOTH:
+#       libnvcuvid.so.1 => /lib/libnvcuvid.so.1
+#       libc.so.6, libdl.so.2, libm.so.6 all found
+#     ldconfig -p in BOTH resolves:
+#       libnvidia-encode.so.1 => /lib/libnvidia-encode.so.1
+#       libcuda.so.1          => /lib/libcuda.so.1
+#
+# (c) LD_LIBRARY_PATH / env / entrypoint  -> NO. /proc/<pid>/environ is
+#     byte-comparable between the two servers (same NVIDIA_*, PLEX_* set;
+#     only VERSION differs by design). Both have empty LD_LIBRARY_PATH.
+#
+# (d) ld.so.conf.d layout                 -> NO (cosmetically different,
+#     functionally identical). prod has 4 nvcr drop-ins, test2 has 2; both
+#     resolve the same sonames via ldconfig. /usr/lib + /lib are in both.
+#
+# (e) GPU not visible / CUDA enumeration dead -> NO. A ctypes/dlopen probe run
+#     in BOTH containers returns identical results:
+#       libcuda.so.1 dlopen=OK   libnvidia-encode.so.1 dlopen=OK
+#       libnvidia-ml.so.1 dlopen=OK   libnvcuvid.so.1 dlopen=OK
+#       cuInit(0)=0   cuDeviceGetCount=0 n=1
+#       dev0 name=NVIDIA GeForce GTX 1070 pci=0000:01:00.0
+#       encode: NvEncodeAPICreateInstance=OK  NvEncodeAPIGetMaxSupportedVersion=OK
+#     Same for the `nvidia` user (abc) and root.
+#
+# (f) Preferences gate                    -> NO. Preferences.xml differs by ONE
+#     unrelated key (PubSubServerPing 55 vs 64). Both carry:
+#       TranscoderHardwareAccelerated="1"
+#       EnableHardwareEncoding="1"
+#       HardwareDevicePath="10de:1be1:1043:13f0@0000:01:00.0"
+#
+# (g) Crack signature / injection         -> NO. The crack AOB signature
+#       "55 48 89 E5 41 57 41 56 53 50 49 89 F7 48 89 FB 4C 8D 77 08 4C 89 F7 E8 ?? ?? ?? ?? 48 8D 7B ??"
+#     matches EXACTLY ONCE in both binaries (1.43.0 @0x84ec26, 1.43.4 @0x8863f0).
+#     libsoci_core.so is structurally identical (223560 bytes, 18 NEEDED).
+#     The 4 hooks are exported and present: hook_is_feature_available,
+#     hook_bitset_init, hook_is_user_feature_set, hook_map_find.
+#
+# (h) FFmpeg build flags / codec cache    -> NO. The `Plex Transcoder` binary's
+#     embedded `configuration:` string is IDENTICAL (option-for-option) between
+#     1.43.0 and 1.43.4 — same --enable-encoder=h264_nvenc, hevc_nvenc,
+#     --enable-cuda-llvm, --enable-hwaccel=av1_nvdec, same ffnvcodec 11.1.5.3.
+#     Both libavcodec.so.60 contain h264_nvenc/hevc_nvenc/NvEncodeAPICreateInstance.
+#     Per-codec cache dirs (74455c4-... vs a336ba9-...) are structurally identical.
+#     avcodec_find_encoder_by_name("h264_nvenc") returns FOUND in BOTH containers.
+#
+# (i) The capability-probe code itself    -> NO. The probe emitter, the loop
+#     driver that iterates candidate names, the CUDA dlopen+dlsym chain, and
+#     the FFmpeg hwdevice construction are instruction-for-instruction
+#     equivalent between the two builds (only register allocation / stack
+#     offsets / string offsets differ). The candidate-name string table is
+#     identical (h264_nvenc, vc1_vaapi, PLEX_MEDIA_SERVER_IS_KAMINO, ...).
+#
+#     Probe entry log emitter:   1.43.0 0x101a0a3   <->
+#                                1.43.4 0x108d8a5   (same code)
+#     Probe body (av_hwdevice_ctx_create):
+#                                1.43.0 0x1018273   <->
+#                                1.43.4 0x108b8f7   (same code)
+#     dlsym chain (identical names, both builds):
+#       cuInit, cuDeviceGetCount, cuDeviceGet, cuDeviceGetPCIBusId,
+#       cuDeviceGetName, cuGetErrorString, cuDeviceGetLuid, cuDeviceGetAttribute,
+#       nvmlInit, nvmlDeviceGetHandleByPciBusId, nvmlDeviceGetPciInfo_v2,
+#       nvmlErrorString, nvmlShutdown
+#
+# ============================================================================
+# 4. THE ONE STRUCTURAL CHANGE THAT MATTERS (found this session)
+# ============================================================================
+#
+# 4a. FeatureManager gained a bool-returning, bool-taking method.
+#
+#     These mangled symbols exist ONLY in 1.43.4:
+#       N5boost3_bi6bind_tIbNS_4_mfi3mf1Ib14FeatureManagerbEENS0_5list2INS0_5valueIPS4_EENS7_IbEEEEEE
+#       NSt3__26__bindIM14FeatureManagerFbbEJPS1_bEEE
+#       NSt3__218__weak_result_typeIM14FeatureManagerFbbEEE
+#       NSt3__215binary_functionIP14FeatureManagerbbEE
+#     ...where 1.43.0 has only:
+#       N5boost3_bi6bind_tIvNS_4_mfi3mf0Iv14FeatureManagerEENS0_5list1INS0_5valueIPS4_EEEEEE
+#       NSt3__26__bindIM14FeatureManagerFvvEJPS1_EEE
+#       NSt3__218__weak_result_typeIM14FeatureManagerFvvEEE
+#       NSt3__214unary_functionIP14FeatureManagervEE
+#
+#     i.e. FeatureManager::f(void) -> void   became   FeatureManager::f(bool) -> bool.
+#     A predicate went in (or a setter became a predicate). This is on the
+#     entitlement/feature path, not the transcode path.
+#
+# 4b. The features endpoint changed from "give me everything" to a
+#     hard-coded filtered request.
+#
+#     1.43.0 string:  "%s/api/v2/server/users/features"
+#     1.43.4 string:  "/api/v2/server/users/features?filterFeatures[]=b83c8dc9-5a01-4b7a-a7c9-5870c8a6e21b&filterFeatures[]=926bc176-58ca-47da-b8e3-080ed14ea6ba&filterFeatures[]=ea791163-c28d-4b7c-af88-bcc9553b206d&filterFeatures[]=6ab6677b-ad9b-444f-9ca1-b8027d05b3e1&filterFeatures[]=56cd352b-0d47-436d-aced-f20db3508de5"
+#
+#     1.43.4 also adds "/refreshFeatures".
+#
+#     Resolving those 5 GUIDs against the crack's own embedded 199-entry
+#     GUID->name table:
+#       b83c8dc9-... -> ios14-privacy-banner
+#       926bc176-... -> custom-home-removal
+#       6ab6677b-... -> client-radio-stations
+#       ea791163-... -> (not present in the crack's table)
+#       56cd352b-... -> (not present in the crack's table)
+#
+#     NOT ONE of them is hwtranscode. In the crack's table:
+#       hwtranscode            4742780c-af9d-4b44-bf5b-7b27e3369aa8
+#       hardware_transcoding   84a754b0-d1ca-4433-af2d-c949bf4b4936
+#       transcode-hevc         044a1fac-6b55-47d0-9933-25a035709432
+#       transcode-tonemapping  0e2acda2-d70d-4df6-96e0-f63cf264d217
+#     and none of those four GUIDs appears anywhere in either server binary.
+#     The server has never shipped the GUIDs locally; they come from the
+#     network. In 1.43.4 the request is *narrowed* to five UI features.
+#
+# 4c. TPU namespace refactor.
+#
+#     Decision-time log tag moved:  [Req#NN/Transcode]  ->  [Req#NN/Transcode/TPU]
+#     All 8 "TPU: hardware transcoding: ..." format strings lost the "TPU: "
+#     prefix in 1.43.4 (the emit SITES survive — xref 1.43.0 0x106e31f ->
+#     1.43.4 0x10e1dc7 — so the code is there, it just never runs).
+#     The un-prefixed "Codecs: hardware transcoding: testing API {} for
+#     device '{}' ({})" format string is byte-identical in both.
+#
+# ============================================================================
+# 5. CONCLUSION
+# ============================================================================
+#
+# The regression is NOT in the crack, NOT in library presence, NOT in dynamic
+# linking, NOT in GPU visibility, NOT in the FFmpeg build, and NOT in the
+# probe code. Every one of those was tested and is identical.
+#
+# What changed is the server's ENTITLEMENT RESOLUTION: 1.43.4 narrowed its
+# feature fetch to a hard-coded five-GUID filter that excludes the hardware
+# transcode features, and gave FeatureManager a new bool(bool) predicate.
+# The crack patches the *local* is_feature_available/bitset layer; on 1.43.4
+# that layer is no longer what gates the hardware path, so the hardware
+# capability probe is never entered, libnvidia-encode/libnvcuvid are never
+# dlopened, and the slot falls to CPU.
+#
+# ============================================================================

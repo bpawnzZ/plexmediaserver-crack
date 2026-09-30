@@ -414,3 +414,210 @@ cheapest first:
    that now returns "no encoder" before the load is attempted.
 3. Whether the 1.43.4 FFmpeg build gates NVENC behind a configure/runtime flag
    the 1.43.0 build did not.
+
+---
+
+# Session 2026-09-30 — all three candidates above tested and killed; the gate is entitlement resolution, not the library load path
+
+Raw evidence: `evidence/2026-09-30-nvenc-vs-ffmpeg-vs-featuremanager.txt` and
+`evidence/2026-09-30-first-divergence.txt`. Live A/B reproduction and a fresh
+`/proc/<pid>/maps` read of both running servers were both re-done this session.
+
+## Result of the three candidate checks — all three are NO
+
+1. **Capability query returning "no encoder" before the load** — **NO.**
+   `avcodec_find_encoder_by_name("h264_nvenc")` returns `FOUND` in **both**
+   containers when run against the container's own
+   `/usr/lib/plexmediaserver/lib/libavcodec.so.60`. Both libavcodec copies
+   contain `h264_nvenc`, `hevc_nvenc`, `nvenc.c`, `nvenc_hevc.c` and
+   `NvEncodeAPICreateInstance`. The per-codec cache directories
+   (`Codecs/74455c4-…` vs `Codecs/a336ba9-…`) are structurally identical —
+   same file list, same sizes — and neither contains an NVENC module (NVENC is
+   a driver library, not a Plex codec module).
+2. **FFmpeg build-time gate** — **NO.** The `configuration:` string embedded in
+   `Plex Transcoder` is **identical option-for-option** between builds (verified
+   by extracting both and diffing the option set: zero unique options either
+   side). Both carry `--enable-encoder=h264_nvenc`, `--enable-encoder=hevc_nvenc`,
+   `--enable-cuda-llvm`, `--enable-hwaccel=av1_nvdec`, and the same
+   `ffnvcodec/11.1.5.3-43d9170`. Only conan package *revisions* differ.
+3. **Env / LD_LIBRARY_PATH / entrypoint lib-copy differences** — **NO.**
+   `/proc/<pid>/environ` is comparable between the two servers (identical
+   `NVIDIA_*`, `PLEX_*`, `NVIDIA_CTK_LIBCUDA_DIR`; only `VERSION` differs by
+   design). Both have empty `LD_LIBRARY_PATH`. `ldconfig -p` resolves
+   `libnvidia-encode.so.1`, `libnvcuvid.so.1` and `libcuda.so.1` to
+   `/lib/...` in **both**. `ldd libnvidia-encode.so.1` resolves cleanly in
+   both. PREFERENCES ARE IDENTICAL: the two `Preferences.xml` differ by exactly
+   one unrelated key (`PubSubServerPing` 55 vs 64) and both carry
+   `TranscoderHardwareAccelerated="1"`, `EnableHardwareEncoding="1"`,
+   `HardwareDevicePath="10de:1be1:1043:13f0@0000:01:00.0"`.
+
+## Fourth check (not in the list) — is the GPU actually enumerable? YES, in both
+
+A direct dlopen/ctypes probe run **inside each container** (both as the Plex
+user `abc` and as root) gives byte-identical results:
+
+```
+libcuda.so.1 dlopen=OK   libnvidia-encode.so.1 dlopen=OK
+libnvidia-ml.so.1 dlopen=OK   libnvcuvid.so.1 dlopen=OK
+cuInit(0)=0   cuDeviceGetCount=0 n=1
+dev0 name=NVIDIA GeForce GTX 1070  pci=0000:01:00.0
+encode: NvEncodeAPICreateInstance=OK  NvEncodeAPIGetMaxSupportedVersion=OK
+```
+
+So 1.43.4 *can* enumerate the GPU and *can* load NVENC. It simply never tries.
+
+## Fresh `/proc/<pid>/maps` of the running servers (this session)
+
+| mapped into `Plex Media Server` | 1.43.0 | 1.43.4 |
+|---|---|---|
+| `plexmediaserver_crack.so` | 5 segments | 5 segments |
+| `libcuda.so.1` | 6 segments | 6 segments |
+| `libnvidia-encode.so.1` | **3 segments** | **ABSENT** |
+| `libnvcuvid.so.1` | **3 segments** | **ABSENT** |
+| `libnvidia-ml.so.1` | ABSENT | ABSENT |
+| total mapped regions | 545 | 392 |
+
+Note: the earlier session's table listed `libnvidia-ml.so.1` as present (3 segs)
+on 1.43.0. Re-read this session gives **ABSENT for nvml in both**. The nvml
+mapping that session saw was most likely a transcoder *child*, not the server.
+The correction does not change the conclusion: the two NVENC/NVDEC **device**
+libraries are the only thing that differs between the servers.
+
+## The disassembly is functionally identical on the whole probe path
+
+Instruction-level comparison (normalising addresses/displacements/registers)
+shows the probe code is the same in both builds:
+
+| | 1.43.0 | 1.43.4 |
+|---|---|---|
+| probe-entry log emitter (`Codecs: testing %s %s%s`) | `0x101a0a3` | `0x108d8a5` |
+| probe body (`av_hwdevice_ctx_create`) | `0x1018273` | `0x108b8f7` |
+| "hardware transcoding: testing API …" emit | `0x10181fe` | `0x108b882` |
+| final decoder/encoder emit site | `0x106e31f` | `0x10e1dc7` |
+| CUDA loader `dlopen("libcuda.so.1")` | `0x10f10fa` | `0x1165776` |
+| CUDA enumeration fn entry | `0x10f0db2` | `0x116542e` (2 callers each) |
+
+The candidate-name string table consumed by the loop is identical in both:
+`h264_nvenc`, `vc1_vaapi`, `_omx`, `_qsv`, `h264_mf`, `hevc_mf`, `ac3_mf`,
+`eac3_eae`, `PLEX_MEDIA_SERVER_IS_KAMINO`. The dlsym chain is identical:
+`cuInit, cuDeviceGetCount, cuDeviceGet, cuDeviceGetPCIBusId, cuDeviceGetName,
+cuGetErrorString, cuDeviceGetLuid, cuDeviceGetAttribute, nvmlInit,
+nvmlDeviceGetHandleByPciBusId, nvmlDeviceGetPciInfo_v2, nvmlErrorString,
+nvmlShutdown`.
+
+**The probe is byte-equivalent code that is simply never called on 1.43.4.**
+
+## What actually changed — two structural diffs on the entitlement path
+
+### (1) `FeatureManager` gained a `bool f(bool)` method
+
+Symbols present **only** in 1.43.4:
+
+```
+N5boost3_bi6bind_tIbNS_4_mfi3mf1Ib14FeatureManagerbEENS0_5list2INS0_5valueIPS4_EENS7_IbEEEEEE
+NSt3__26__bindIM14FeatureManagerFbbEJPS1_bEEE
+NSt3__218__weak_result_typeIM14FeatureManagerFbbEEE
+NSt3__215binary_functionIP14FeatureManagerbbEE
+```
+
+where 1.43.0 has only the void/void form:
+
+```
+N5boost3_bi6bind_tIvNS_4_mfi3mf0Iv14FeatureManagerEENS0_5list1INS0_5valueIPS4_EEEEEE
+NSt3__26__bindIM14FeatureManagerFvvEJPS1_EEE
+NSt3__218__weak_result_typeIM14FeatureManagerFvvEEE
+NSt3__214unary_functionIP14FeatureManagervEE
+```
+
+`FeatureManager::f(void) -> void` became `FeatureManager::f(bool) -> bool`.
+A predicate was added on the entitlement path in 1.43.4.
+
+### (2) The features endpoint narrowed from "everything" to a five-GUID filter
+
+```
+1.43.0:  "%s/api/v2/server/users/features"
+1.43.4:  "/api/v2/server/users/features?filterFeatures[]=b83c8dc9-5a01-4b7a-a7c9-5870c8a6e21b
+                                          &filterFeatures[]=926bc176-58ca-47da-b8e3-080ed14ea6ba
+                                          &filterFeatures[]=ea791163-c28d-4b7c-af88-bcc9553b206d
+                                          &filterFeatures[]=6ab6677b-ad9b-444f-9ca1-b8027d05b3e1
+                                          &filterFeatures[]=56cd352b-0d47-436d-aced-f20db3508de5"
+```
+
+1.43.4 also adds `/refreshFeatures`.
+
+Resolving those five GUIDs against the **crack's own embedded 199-entry
+GUID→name table**:
+
+| GUID | name |
+|---|---|
+| `b83c8dc9-…` | `ios14-privacy-banner` |
+| `926bc176-…` | `custom-home-removal` |
+| `6ab6677b-…` | `client-radio-stations` |
+| `ea791163-…` | (absent from the crack's table) |
+| `56cd352b-…` | (absent from the crack's table) |
+
+**Not one of them is a hardware-transcode feature.** The crack's table maps:
+
+| name | GUID (in crack) | in server binary? |
+|---|---|---|
+| `hwtranscode` | `4742780c-af9d-4b44-bf5b-7b27e3369aa8` | no |
+| `hardware_transcoding` | `84a754b0-d1ca-4433-af2d-c949bf4b4936` | no |
+| `transcode-hevc` | `044a1fac-6b55-47d0-9933-25a035709432` | no |
+| `transcode-tonemapping` | `0e2acda2-d70d-4df6-96e0-f63cf264d217` | no |
+
+The server binaries contain the *names* `hwtranscode` and
+`hardware_transcoding` in both builds but **never the GUIDs** — the GUIDs come
+from the network response (`/api/v2/server/users/features`). 1.43.4 changed the
+request to a narrowed, hard-coded filter that no longer includes the transcode
+features.
+
+### (3) TPU namespace refactor (footprint, not cause)
+
+Decision-time tag moved `[Req#NN/Transcode]` → `[Req#NN/Transcode/TPU]`, and all
+eight `TPU: hardware transcoding: …` format strings lost the `TPU: ` prefix.
+The emit **sites** survive (`0x106e31f` → `0x10e1dc7`), so the code is present
+and simply never runs.
+
+## The first divergence line, precisely
+
+Anchor present in both:
+
+```
+[Req#X/Transcode] MDE: Selected protocol hls; container: mpegts
+```
+
+* 1.43.0's very next line: `Codecs: testing h264_nvenc (encoder)`
+* 1.43.4's very next line: `Streaming Resource: Adding session … Used slots for CPUis now 1`
+
+Seven lines of probe output exist in 1.43.0 and zero in 1.43.4. Everything
+downstream follows deterministically. Full artefact:
+`evidence/2026-09-30-first-divergence.txt`.
+
+## Conclusion for this session
+
+The 1.43.4 regression is **not** a library, loader, GPU-visibility, FFmpeg-build
+or probe-code problem — every one of those was tested and is identical across the
+two builds. The mechanism is **entitlement resolution**: 1.43.4 narrowed its
+feature fetch to a hard-coded five-GUID filter that excludes the hardware
+transcode features and gave `FeatureManager` a new `bool(bool)` predicate. The
+crack patches the *local* `is_feature_available` / bitset layer, and on 1.43.4
+that layer no longer gates the hardware path — so the capability probe is never
+entered, `libnvidia-encode.so.1` / `libnvcuvid.so.1` are never dlopened, and the
+transcode slot falls to `CPU`.
+
+Porting the crack to 1.43.4 therefore requires more than a signature refresh: it
+requires restoring the hardware-transcode entitlement at the layer 1.43.4 now
+consults (the filtered `/api/v2/server/users/features` response and/or whatever
+`FeatureManager::f(bool)` returns), which is a behavioural change, not an
+address patch.
+
+## Still open
+
+1. The two GUIDs absent from the crack's table (`ea791163-…`, `56cd352b-…`) are
+   unidentified. Resolve them against a current Plex feature dump to confirm
+   they are not hardware-related (they behave like client-UI flags).
+2. What exactly `FeatureManager::f(bool) -> bool` decides, and whether the
+   transcode path consults it. Bounded disassembly at the 1.43.4 bind site.
+3. Whether a legitimate Plex Pass account on 1.43.4 also loses hardware
+   transcoding on this GPU. If it does, this is an upstream Plex bug and should
+   be reported rather than worked around.
