@@ -354,7 +354,7 @@ Server side, after joining your network in
 
 ```sh
 sudo zerotier-cli listnetworks
-# 200 listnetworks e543ff8059fc1912 <name> <mac> OK PRIVATE ztchcnaetg 10.189.74.101/16
+# 200 listnetworks <nwid> <name> <mac> OK PRIVATE <iface> <mesh-ip>/16
 ```
 
 That is the whole setup. There is nothing to configure for Plex — with
@@ -362,7 +362,7 @@ That is the whole setup. There is nothing to configure for Plex — with
 IP answers immediately:
 
 ```sh
-curl -s "http://10.189.74.101:32400/identity"
+curl -s "http://<mesh-ip>:32400/identity"
 # <MediaContainer ... version="1.43.0.10492-121068a07"></MediaContainer>
 ```
 
@@ -372,8 +372,8 @@ normally. Streaming, transcoding and remote playback all behave the same as they
 do on the LAN.
 
 Then, from any device on the same network, open
-`http://10.189.74.101:32400/web`. In the Plex apps, add it as a manual connection
-(`10.189.74.101:32400`) — signing in with the same Plex account usually
+`http://<mesh-ip>:32400/web`. In the Plex apps, add it as a manual connection
+(`<mesh-ip>:32400`) — signing in with the same Plex account usually
 auto-discovers it, but a manual connection is deterministic and does not depend
 on Plex's own discovery services.
 
@@ -382,16 +382,16 @@ mobile apps are the more polished of the two if that matters to you.
 
 ### What actually has to be in place
 
-| Requirement | Why | Where it was set here |
+| Requirement | Why | Where to set it |
 |---|---|---|
 | Node joined **and authorised** | an unauthorised node gets an interface but no route | ZeroTier Central → Members |
 | `allowManaged=1` | lets ZeroTier assign the mesh address | `networks.d/<nwid>.local.conf` |
 | `allowGlobal=0`, `allowDefault=0` | keeps ZeroTier out of your default route and global traffic — mesh only | same file |
-| Firewall permits the mesh interface | UFW's default is deny-incoming | `ufw allow in on ztchcnaetg` |
+| Firewall permits the mesh interface | UFW's default is deny-incoming | `ufw allow in on <iface>` |
 | `network_mode: host` in compose | otherwise `32400` is only reachable inside the container's own netns | compose file |
 
 `allowGlobal=0` and `allowDefault=0` are why this "just works" without touching
-any routing: ZeroTier adds its own `10.189.0.0/16` route and interface, and
+any routing: ZeroTier adds its own mesh route and interface, and
 nothing else. Leave them off.
 
 ### Gotchas
@@ -400,19 +400,18 @@ nothing else. Leave them off.
   public-internet path via a port forward or Plex's relay, neither of which you
   are using. The red indicator is expected and means nothing here. Do not go
   chasing it with a manual port mapping or by enabling the relay.
-- **DNS is a mesh dependency.** Here it is pinned globally for every container in
-  `/etc/docker/daemon.json` (`"dns": ["10.189.221.222"]`), and that resolver is
-  only reachable *over the mesh* — `ip route get 10.189.221.222` resolves through
-  `ztchcnaetg`. So when the VPN drops, containers lose name resolution along with
-  it. Plex itself is unaffected (it talks to IPs), but anything that resolves a
-  hostname inside a container is not. Point `dns` at a resolver reachable
-  without the tunnel if that bothers you.
-- **ZeroTier's own DNS management is inert here.** It drives `systemd-resolved`,
-  which is not installed on this host, so `allowDNS=1` does nothing and the
-  network advertises no resolver. The host's `/etc/resolv.conf` is a plain static
-  file, not a symlink.
+- **DNS is a mesh dependency.** It is pinned globally for every container in
+  `/etc/docker/daemon.json` (`"dns": ["<resolver-ip>"]`), and that resolver is
+  only reachable *over the mesh*. So when the VPN drops, containers lose name
+  resolution along with it. Plex itself is unaffected (it talks to IPs), but
+  anything that resolves a hostname inside a container is not. Point `dns` at a
+  resolver reachable without the tunnel if that bothers you.
+- **ZeroTier's own DNS management is inert on a host without systemd-resolved.**
+  It drives `systemd-resolved`, which is not installed on every host, so
+  `allowDNS=1` does nothing there and the network advertises no resolver. On such
+  a host `/etc/resolv.conf` is a plain static file, not a symlink.
 - **The client must be on the VPN too.** A browser on a friend's laptop that has
-  not joined the network cannot reach `10.189.74.101`, which is the point.
+  not joined the network cannot reach `<mesh-ip>`, which is the point.
 - **Bitrate still matters.** Remote playback that needs more than your tunnel
   sustains will buffer. Cap the remote quality in the client rather than blaming
   the GPU — check the `encoder=` line first to confirm the transcode is on the
