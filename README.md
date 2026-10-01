@@ -417,6 +417,89 @@ nothing else. Leave them off.
   the GPU — check the `encoder=` line first to confirm the transcode is on the
   hardware path at all.
 
+### Any mesh, not just ZeroTier — and what changes for WireGuard
+
+ZeroTier, Tailscale and WireGuard all carry this fine. The mesh is orthogonal to
+the crack: it changes *how the client reaches* the server, not how the server
+encodes. But the local/remote verdict is **not** orthogonal, and it is worth
+knowing why ZeroTier appears to "just work".
+
+Verified on this server with a WireGuard hub on a separate host (clients
+`10.13.13.0/24`, hub `10.13.13.1`, server `10.13.13.2`):
+
+**Plex publishes ~9 connection URIs to plex.tv** — its LAN address, the ZeroTier
+address, every docker bridge gateway, a stray interface, and the IPv6 addresses.
+A WireGuard client can reach **none** of them: its `AllowedIPs` is the tunnel
+subnet only. It *can* reach the server at its tunnel IP, but Plex never
+advertises it, so the app falls back to Plex's relay.
+
+**And the relay is what produces the Plex Pass prompt.** Plex Relay is a
+Plex Pass feature. If the public port-forward is closed (usual here — the mesh
+exists so you never open one), anything Plex classifies as *remote* falls back
+to relay, and remote access then demands a Pass.
+
+**Why ZeroTier dodges this is an accident worth understanding:** the kernel
+routes the ZeroTier address via `dev lo`, so Plex sees those requests as
+**loopback** — and loopback is unconditionally local. WireGuard traffic arrives
+on `wg0` from a subnet Plex never enumerates (its startup interface list simply
+does not contain `wg0`), so it is classified remote. Same crack, same server,
+different verdict — the mesh protocol decides it.
+
+That means ZeroTier's "free remote access" is a side effect of Plex mistaking
+mesh traffic for local, not a property of the mesh itself. Expect to work for it
+on WireGuard.
+
+**The DNS trap, and it is the same trap twice.** A ZeroTier address
+(`<ZeroTier subnet>` in that deployment) is reachable **only over ZeroTier**. A
+WireGuard client has no route to it. Putting such an address into any path a
+tunnel client or a tunnel-dependent service uses fails — and fails confusingly,
+because it works perfectly from any host that *is* on ZeroTier.
+
+This bit twice on one box:
+
+1. `PEERDNS=<zerotier-ip>` in the WireGuard hub config broke a roaming phone's
+   internet outright — the phone had no route to the resolver, so every lookup
+   failed and the device looked offline.
+2. `/etc/docker/daemon.json` had `"dns": ["<zerotier-ip>"]` globally for every
+   container. Point Docker's DNS at a resolver the containers can reach
+   **without** the tunnel, or list the tunnel resolver first and the
+   ZeroTier/pihole resolver second:
+
+   ```json
+   { "dns": ["<tunnel-resolver-ip>", "<zerotier-resolver-ip>"] }
+   ```
+
+   Note the trade: tunnel-first loses the pihole filtering and depends on the
+   tunnel being up; zero-tier-first inverts exactly that.
+
+   **`systemctl reload docker` does not apply a `dns` change.** dockerd logs
+   `Reloaded configuration` while its effective config still lists the old
+   servers. A full `systemctl restart docker` is required — containers with a
+   restart policy (`always` / `unless-stopped`) come back on their own. Verify
+   from inside one afterwards:
+
+   ```sh
+   docker exec plex cat /etc/resolv.conf   # the new server must be listed
+   ```
+
+### Plex settings that do *not* control this
+
+Chasing the Pass prompt through Plex preferences wastes time. Measured, on a
+signed-in server:
+
+| Setting | Reality |
+|---|---|
+| `LanNetworksBandwidth` | **Bandwidth policy, not the local/remote verdict.** Setting it changes nothing about reachability. |
+| `customConnections` | Publishes a URI to plex.tv, but the client still does not prefer it. |
+| `allowedNetworks` | **Must stay empty.** It grants access **without login**, and only applies when the server is signed *out*. Filling it with a mesh subnet opens **unauthenticated** access to anything on the mesh. |
+| `secureConnections` | `1` means **Preferred** — Plex's enum is inverted (`1:Preferred\|0:Required`). Do not "fix" it to `0`; that is the *stricter* setting and breaks plain-HTTP mesh clients. |
+
+The lesson from all of the above: **the mesh gets the packets there, and the
+crack handles encoding — but whether Plex treats a client as local is its own
+decision, and on WireGuard it will not.** Verify reachability with
+`curl http://<tunnel-ip>:32400/identity` before touching a single preference;
+if that answers, the network is fine and the problem is classification.
+
 ---
 
 ## 📌 Pin your version
