@@ -70,7 +70,7 @@ never entered, `libnvidia-encode.so.1` and `libnvcuvid.so.1` are never dlopened
 present in 1.43.0's), and the slot falls to `CPU`.
 
 Corroborating: the decision moved from the `Transcode` log namespace (1.43.0) to
-`Transcode/TPU` (1.43.4), and the `TPU: ` prefix was stripped from the
+`Transcode/TPU` (1.43.4), and the `TPU:` prefix was stripped from the
 hardware-transcoding log format strings in 1.43.4 — a refactor footprint on
 exactly this path. 1.43.4 also advertises `transcodeHwEncoding="nvenc"` to the
 client while actually launching `Plex Transcoder … -codec:0 libx264`.

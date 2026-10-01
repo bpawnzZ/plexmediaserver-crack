@@ -133,7 +133,7 @@ Open questions, in rough order of usefulness:
 
 ---
 
-# Session 2026-09-29/30 — controlled A/B reproduction, root cause isolated
+## Session 2026-09-29/30 — controlled A/B reproduction, root cause isolated
 
 All of the below is new, verified this session, on this host (workstation, GTX 1070
 Mobile `10de:1be1`, driver 570.153.02). Logs and binaries retained under
@@ -239,7 +239,7 @@ Same operation, log-namespace tag differs by version:
 | Tag on "Adding session…/Reached Decision" | `[Req#11b/Transcode]` | `[Req#b9/Transcode/**TPU**]` |
 
 `TPU` is present in both binaries but trimmed in 1.43.4 (19 → 10 `TPU`-prefixed
-strings). The `TPU: ` prefix was stripped from the hardware-transcoding log
+strings). The `TPU:` prefix  was stripped from the hardware-transcoding log
 format strings in 1.43.4 while the non-TPU `Codecs: hardware transcoding: testing
 API {}` format string is byte-identical in both (1.43.0 `@0x27311f`, 1.43.4
 `@0x27cb57`). This is the refactor footprint on exactly the code path under test.
@@ -309,7 +309,7 @@ invalidate the A/B baseline. The `plex-test2` compose correctly sets
 
 ---
 
-# Session 2026-09-29 (later) — root cause narrowed to a missing library, not the crack
+## Session 2026-09-29 (later) — root cause narrowed to a missing library, not the crack
 
 New this pass: the failure is visible **in the running process**, before any
 transcode is requested. No disassembly is needed to see it.
@@ -380,7 +380,7 @@ would have been pulled in and was not.
 
 ## String-level footprint (unchanged from the prior session, still relevant)
 
-1.43.4 strips the `TPU: ` prefix from every hardware-transcode log format
+1.43.4 strips the `TPU:` prefix  from every hardware-transcode log format
 string (`TPU: hardware transcoding: final decoder: %s, final encoder: %s` →
 `hardware transcoding: final decoder: %s, final encoder: %s`), while the
 `Codecs: hardware transcoding: testing API {} for device '{}' ({})` format
@@ -417,7 +417,7 @@ cheapest first:
 
 ---
 
-# Session 2026-09-30 — all three candidates above tested and killed; the gate is entitlement resolution, not the library load path
+## Session 2026-09-30 — all three candidates above tested and killed; the gate is entitlement resolution, not the library load path
 
 Raw evidence: `evidence/2026-09-30-nvenc-vs-ffmpeg-vs-featuremanager.txt` and
 `evidence/2026-09-30-first-divergence.txt`. Live A/B reproduction and a fresh
@@ -574,7 +574,7 @@ features.
 ### (3) TPU namespace refactor (footprint, not cause)
 
 Decision-time tag moved `[Req#NN/Transcode]` → `[Req#NN/Transcode/TPU]`, and all
-eight `TPU: hardware transcoding: …` format strings lost the `TPU: ` prefix.
+eight `TPU: hardware transcoding: …` format strings lost the `TPU:` prefix .
 The emit **sites** survive (`0x106e31f` → `0x10e1dc7`), so the code is present
 and simply never runs.
 
@@ -586,8 +586,8 @@ Anchor present in both:
 [Req#X/Transcode] MDE: Selected protocol hls; container: mpegts
 ```
 
-* 1.43.0's very next line: `Codecs: testing h264_nvenc (encoder)`
-* 1.43.4's very next line: `Streaming Resource: Adding session … Used slots for CPUis now 1`
+- 1.43.0's very next line: `Codecs: testing h264_nvenc (encoder)`
+- 1.43.4's very next line: `Streaming Resource: Adding session … Used slots for CPUis now 1`
 
 Seven lines of probe output exist in 1.43.0 and zero in 1.43.4. Everything
 downstream follows deterministically. Full artefact:

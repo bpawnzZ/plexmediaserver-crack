@@ -142,18 +142,22 @@ This is the highest-value hypothesis in the project. **Test it first (Task B).**
 Split labour so no two agents duplicate effort. Report raw output; never a summary of output.
 
 ### Task A — recover the authoritative `g_features` map contents
+
 Static: the map is built at runtime by `_GLOBAL__sub_I_hook.cpp` (`0x9defd`); the inserts
 reference string literals in `.rodata`. Either
 (a) disassemble `0x9defd`..end of the function and walk the `insert` calls to their string
 addresses, or
 (b) load the `.so` under `gdb` and dump the map after the constructor runs, or
 (c) write a 20-line C++/Python harness that `dlopen`s it and prints `g_features`.
+
 **Deliverable:** the complete key list, with the method used. This tells us exactly which
 features are being granted and whether anything entitlement-related is missing.
 
 ### Task B — find where 1.43.4 actually decides GPU-vs-CPU (the decisive task)
+
 Get the Plex 1.43.4 `Plex Media Server` binary and locate the transcode-decision path.
 Specifically determine:
+
 1. Does 1.43.4 read the **704-bit** feature bitset in that path? (If it reads a *different*
    width, that alone explains everything.)
 2. Where is the encoder-candidate list built? Is it the *capability probe* (encoder
@@ -166,17 +170,20 @@ Compare against 1.43.0 to find the divergence. **Deliverable:** the exact functi
 disassembly, that differs between the two versions on this path.
 
 ### Task C — reproduce and characterise the failure precisely
+
 Bring up a 1.43.4 container with the known-good `.so` and `PLEXCRACK_DEBUG=1`. Capture the
 full startup log and diff it against 1.43.0's. The first line that differs *before* the first
 transcode request is a lead. **Deliverable:** the raw log pair plus the first divergence.
 
 ### Task D — the two-crack reconciliation
+
 Determine whether this repo's ~2 MB single-hook source can be *extended* to the 4-hook
 behaviour in §4 (it is ~100 lines of C++ on top of existing `sig_scan`/`create_hook`).
 If yes, implement it — that would make the repo reproduce the known-good artifact, which is
 a major win for the project. If no, state precisely what is missing.
 
 ### Task E — sweep for a published 4-hook source (low priority, timeboxed)
+
 Timebox: **30 minutes total.** Upstream `gitgud.io/yuv420p10le/plexmediaserver_crack` → 403;
 `gmh5225/plexmediaserver_crack` GitHub mirror → single commit 2024-05-07. Check archive.org,
 code search engines, mirrors, and forks. Report negative results as results. **Do not let
@@ -206,14 +213,17 @@ docker logs plex 2>&1 | grep -m1 'encoder='
 Both PASS together = hardware path. Anything else is not a result. Record raw output.
 
 ### Build constraints
+
 - The `.so` **must be a musl build** — Plex Media Server is a musl binary; a glibc `.so` will
   not load. Never build on the host (host is glibc 2.44). Build via
   `docker/Dockerfile.build` (Alpine).
 - Verify every build:
+
   ```sh
   readelf -d plexmediaserver_crack.so | grep NEEDED
   # must list libc.musl-x86_64.so.1 — NOT libc.so.6
   ```
+
 - Do **not** change the version pin `linuxserver/plex:1.43.0.10492-121068a07-ls297` and do not
   set `VERSION=docker` (that self-updates on boot and silently walks past the pin).
 
@@ -226,6 +236,7 @@ Not present (install if needed, but prefer what exists): capstone, pyelftools, l
 Ghidra. `radare2` covers decompilation (`r2 -A`, `pdf`, `pdg` with r2ghidra if installed).
 
 Other prior findings that save you time:
+
 - `Plex Transcoder` has a **space in its name** — `docker exec … bash -c "…"` mangles the
   path. Write a script file and `docker cp` it in.
 - Plex's codec directory name is **version-specific** (hashed dir under `Codecs/`). Resolve at
@@ -240,6 +251,7 @@ Other prior findings that save you time:
 Read `~/git/plexmediaserver_crack_updated/AGENTS.md` and `docs/FINDINGS.md` **before**
 proposing hypotheses. `FINDINGS.md` is a list of things already tested and killed — the repo's
 main value. Do not re-investigate:
+
 1. Stale/wrong signature — matches exactly once in 1.43.0, 1.43.3, 1.43.4.
 2. The `lea` displacement byte — a real robustness bug, fixed, but **not** the 1.43.4 cause.
 3. NVIDIA container toolkit / CDI — affects all versions equally, already worked around.
@@ -265,5 +277,6 @@ the command run, the raw output, and the file:line or address it came from. Add 
 the evidence" is one of the most valuable things you can produce.
 
 Final report must state, plainly:
+
 - What now works (with the two log lines proving it), and
 - What does NOT work / was not tested — including the limits of what you verified.
