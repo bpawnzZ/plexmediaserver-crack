@@ -343,11 +343,97 @@ keeps the stream small. A 1080p NVENC stream is roughly 4–8 Mbit/s, which any 
 tunnel carries comfortably — where direct-playing a 40 Mbit/s remux would not.
 That headroom is the difference between one remote stream and several.
 
-[ZeroTier](https://www.zerotier.com/), [Tailscale](https://tailscale.com/) and a
-personal WireGuard setup all work. The author uses ZeroTier; the steps below are
-the ones verified on this server.
+### Pick your mesh: ZeroTier or WireGuard
 
-### ZeroTier — verified on this setup
+Both carry the stream. They do **not** behave the same, and the difference is
+not obvious until you hit it:
+
+| | ZeroTier / Tailscale | Plain WireGuard |
+|---|---|---|
+| Reach the server at its mesh IP | ✅ | ✅ |
+| Plex treats the client as **local** | ✅ by accident | ❌ never |
+| Remote access without a Pass | ✅ works out of the box | ⚠️ see below |
+| Setup effort | join network, authorise | configure hub + per-client keys |
+
+**The rule:** the mesh gets your packets there and the crack handles encoding —
+but *whether Plex considers a client local is a separate decision*, and on
+WireGuard it will not. ZeroTier appears to "just work" for a reason worth
+understanding, because it does not generalise.
+
+### Why ZeroTier works and WireGuard does not
+
+This is measured on a real deployment, not theory.
+
+Plex publishes roughly **9 connection URIs** to plex.tv: its LAN address, the
+ZeroTier address, every docker bridge gateway, a stray interface, and the IPv6
+addresses. A WireGuard client can reach **none of them** — its `AllowedIPs` is
+the tunnel subnet alone. It *can* reach the server at its tunnel IP, but Plex
+never advertises that, so the app gives up and falls back to **Plex Relay**.
+
+Relay is a **Plex Pass feature**. Since the mesh exists precisely so you never
+open a port forward, there is no public address for Plex to use either — so
+anything Plex classifies as *remote* lands on relay, and relay asks for a Pass.
+
+ZeroTier sidesteps all of it by accident. The kernel routes the ZeroTier address
+via **`dev lo`**, so Plex sees those requests as **loopback** — and loopback is
+unconditionally local. WireGuard traffic arrives on `wg0` from a subnet Plex
+never enumerates (its startup interface list does not contain `wg0` at all), so
+it is classified remote.
+
+**Same crack, same server, different verdict — the mesh protocol decides it.**
+ZeroTier's "free remote access" is a side effect of Plex mistaking mesh traffic
+for local traffic, not a property of the mesh. Expect to earn it on WireGuard.
+
+### DNS is the real trap, and it bites twice
+
+Read this even if you never use WireGuard — it is the thing most likely to waste
+an evening.
+
+A ZeroTier address (e.g. `<ZeroTier subnet>`) is reachable **only over ZeroTier**. A
+WireGuard client has no route to it. So the moment a ZeroTier-only address ends
+up in a path that a tunnel client or a tunnel-dependent service depends on, that
+path breaks — and breaks **confusingly**, because it works perfectly from any
+host that happens to be on ZeroTier. You will test from the wrong host and
+conclude the config is fine.
+
+Two real failures, one box:
+
+1. **`PEERDNS=<zerotier-ip>` in the WireGuard hub.** The phone had no route to
+   the resolver, so *every* DNS lookup failed and the device looked like it had
+   no internet at all. The tunnel itself was fine.
+2. **`/etc/docker/daemon.json` pinned `"dns": ["<zerotier-ip>"]`** for every
+   container on the host. When the tunnel is down, **name resolution inside
+   every container dies with it.** Plex is unaffected (it talks to IPs), but
+   anything that resolves a hostname is not.
+
+The fix is ordering, not removal — put a resolver the containers can always
+reach first:
+
+```json
+{ "dns": ["<tunnel-or-local-resolver>", "<zerotier-resolver>"] }
+```
+
+That ordering is a real trade, so choose deliberately:
+
+- **Tunnel/local first** — survives ZeroTier being down, but you lose pihole
+  filtering for containers.
+- **ZeroTier first** — keeps pihole filtering, but container DNS dies whenever
+  the mesh does.
+
+Two gotchas when you apply it:
+
+- **`systemctl reload docker` does not apply a `dns` change.** dockerd logs
+  `Reloaded configuration` while its *effective* config still lists the old
+  servers. You need a full `systemctl restart docker`. Containers with a
+  restart policy (`always` / `unless-stopped`) come back on their own.
+- **Verify from inside a container**, not from the host — they are different
+  network namespaces:
+
+  ```sh
+  docker exec plex cat /etc/resolv.conf   # your new server must be listed
+  ```
+
+### ZeroTier setup — verified on this server
 
 Server side, after joining your network in
 [ZeroTier Central](https://my.zerotier.com/) and authorising the node:
@@ -377,8 +463,9 @@ Then, from any device on the same network, open
 auto-discovers it, but a manual connection is deterministic and does not depend
 on Plex's own discovery services.
 
-Installing the client is required, including on phones and TVs. Tailscale's
-mobile apps are the more polished of the two if that matters to you.
+**Installing the mesh client on the viewing device is required**, phones and TVs
+included. A browser on a friend's laptop that has not joined the network cannot
+reach `<mesh-ip>` — which is the point.
 
 ### What actually has to be in place
 
@@ -391,98 +478,25 @@ mobile apps are the more polished of the two if that matters to you.
 | `network_mode: host` in compose | otherwise `32400` is only reachable inside the container's own netns | compose file |
 
 `allowGlobal=0` and `allowDefault=0` are why this "just works" without touching
-any routing: ZeroTier adds its own mesh route and interface, and
-nothing else. Leave them off.
+any routing: ZeroTier adds its own mesh route and interface, and nothing else.
+Leave them off.
 
-### Gotchas
+### Other gotchas
 
-- **Plex's "Remote Access" page will still say unavailable.** It is testing the
+- **Plex's "Remote Access" page will still say unavailable.** It tests the
   public-internet path via a port forward or Plex's relay, neither of which you
   are using. The red indicator is expected and means nothing here. Do not go
   chasing it with a manual port mapping or by enabling the relay.
-- **DNS is a mesh dependency.** It is pinned globally for every container in
-  `/etc/docker/daemon.json` (`"dns": ["<resolver-ip>"]`), and that resolver is
-  only reachable *over the mesh*. So when the VPN drops, containers lose name
-  resolution along with it. Plex itself is unaffected (it talks to IPs), but
-  anything that resolves a hostname inside a container is not. Point `dns` at a
-  resolver reachable without the tunnel if that bothers you.
 - **ZeroTier's own DNS management is inert on a host without systemd-resolved.**
   It drives `systemd-resolved`, which is not installed on every host, so
   `allowDNS=1` does nothing there and the network advertises no resolver. On such
   a host `/etc/resolv.conf` is a plain static file, not a symlink.
-- **The client must be on the VPN too.** A browser on a friend's laptop that has
-  not joined the network cannot reach `<mesh-ip>`, which is the point.
 - **Bitrate still matters.** Remote playback that needs more than your tunnel
   sustains will buffer. Cap the remote quality in the client rather than blaming
   the GPU — check the `encoder=` line first to confirm the transcode is on the
   hardware path at all.
 
-### Any mesh, not just ZeroTier — and what changes for WireGuard
-
-ZeroTier, Tailscale and WireGuard all carry this fine. The mesh is orthogonal to
-the crack: it changes *how the client reaches* the server, not how the server
-encodes. But the local/remote verdict is **not** orthogonal, and it is worth
-knowing why ZeroTier appears to "just work".
-
-Verified on this server with a WireGuard hub on a separate host (clients
-`10.13.13.0/24`, hub `10.13.13.1`, server `10.13.13.2`):
-
-**Plex publishes ~9 connection URIs to plex.tv** — its LAN address, the ZeroTier
-address, every docker bridge gateway, a stray interface, and the IPv6 addresses.
-A WireGuard client can reach **none** of them: its `AllowedIPs` is the tunnel
-subnet only. It *can* reach the server at its tunnel IP, but Plex never
-advertises it, so the app falls back to Plex's relay.
-
-**And the relay is what produces the Plex Pass prompt.** Plex Relay is a
-Plex Pass feature. If the public port-forward is closed (usual here — the mesh
-exists so you never open one), anything Plex classifies as *remote* falls back
-to relay, and remote access then demands a Pass.
-
-**Why ZeroTier dodges this is an accident worth understanding:** the kernel
-routes the ZeroTier address via `dev lo`, so Plex sees those requests as
-**loopback** — and loopback is unconditionally local. WireGuard traffic arrives
-on `wg0` from a subnet Plex never enumerates (its startup interface list simply
-does not contain `wg0`), so it is classified remote. Same crack, same server,
-different verdict — the mesh protocol decides it.
-
-That means ZeroTier's "free remote access" is a side effect of Plex mistaking
-mesh traffic for local, not a property of the mesh itself. Expect to work for it
-on WireGuard.
-
-**The DNS trap, and it is the same trap twice.** A ZeroTier address
-(`<ZeroTier subnet>` in that deployment) is reachable **only over ZeroTier**. A
-WireGuard client has no route to it. Putting such an address into any path a
-tunnel client or a tunnel-dependent service uses fails — and fails confusingly,
-because it works perfectly from any host that *is* on ZeroTier.
-
-This bit twice on one box:
-
-1. `PEERDNS=<zerotier-ip>` in the WireGuard hub config broke a roaming phone's
-   internet outright — the phone had no route to the resolver, so every lookup
-   failed and the device looked offline.
-2. `/etc/docker/daemon.json` had `"dns": ["<zerotier-ip>"]` globally for every
-   container. Point Docker's DNS at a resolver the containers can reach
-   **without** the tunnel, or list the tunnel resolver first and the
-   ZeroTier/pihole resolver second:
-
-   ```json
-   { "dns": ["<tunnel-resolver-ip>", "<zerotier-resolver-ip>"] }
-   ```
-
-   Note the trade: tunnel-first loses the pihole filtering and depends on the
-   tunnel being up; zero-tier-first inverts exactly that.
-
-   **`systemctl reload docker` does not apply a `dns` change.** dockerd logs
-   `Reloaded configuration` while its effective config still lists the old
-   servers. A full `systemctl restart docker` is required — containers with a
-   restart policy (`always` / `unless-stopped`) come back on their own. Verify
-   from inside one afterwards:
-
-   ```sh
-   docker exec plex cat /etc/resolv.conf   # the new server must be listed
-   ```
-
-### Plex settings that do *not* control this
+### Plex settings that do *not* control any of this
 
 Chasing the Pass prompt through Plex preferences wastes time. Measured, on a
 signed-in server:
@@ -494,11 +508,25 @@ signed-in server:
 | `allowedNetworks` | **Must stay empty.** It grants access **without login**, and only applies when the server is signed *out*. Filling it with a mesh subnet opens **unauthenticated** access to anything on the mesh. |
 | `secureConnections` | `1` means **Preferred** — Plex's enum is inverted (`1:Preferred\|0:Required`). Do not "fix" it to `0`; that is the *stricter* setting and breaks plain-HTTP mesh clients. |
 
-The lesson from all of the above: **the mesh gets the packets there, and the
-crack handles encoding — but whether Plex treats a client as local is its own
-decision, and on WireGuard it will not.** Verify reachability with
-`curl http://<tunnel-ip>:32400/identity` before touching a single preference;
-if that answers, the network is fine and the problem is classification.
+### Debug order: network first, preferences never
+
+1. **Can the client reach the server at its tunnel IP?**
+
+   ```sh
+   curl http://<tunnel-ip>:32400/identity
+   ```
+
+   If that answers, **the network is fine** — the problem is classification, and
+   no amount of Plex preference editing fixes classification.
+2. **Is the client's mesh interface up, and is the handshake current?**
+
+   ```sh
+   sudo wg show          # WireGuard
+   sudo zerotier-cli listnetworks   # ZeroTier
+   ```
+
+3. **Does the client resolve names at all?** If not, you have walked into the
+   DNS trap above.
 
 ---
 
