@@ -139,7 +139,7 @@ Open questions, in rough order of usefulness:
 
 ## Session 2026-09-29/30 — controlled A/B reproduction, root cause isolated
 
-All of the below is new, verified this session, on this host (workstation, GTX 1070
+All of the below is new, verified this session, on this host (GTX 1070
 Mobile `10de:1be1`, driver 570.153.02). Logs and binaries retained under
 `evidence/` and `work/bin/`.
 

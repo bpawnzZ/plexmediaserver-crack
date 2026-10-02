@@ -1,12 +1,12 @@
 #!/bin/bash
 # A/B transcode + strace of the server process for nvidia library access
-TOK30=$(sudo grep -oP 'PlexOnlineToken="\K[^"]+' "~/docker/plex-crypt/plex/Library/Application Support/Plex Media Server/Preferences.xml")
-TOK34=$(sudo grep -oP 'PlexOnlineToken="\K[^"]+' "~/docker/plex-test2/plex/Library/Application Support/Plex Media Server/Preferences.xml")
+TOK30=$(sudo grep -oP 'PlexOnlineToken="\K[^"]+' "$HOME/docker/plex-crypt/plex/Library/Application Support/Plex Media Server/Preferences.xml")
+TOK34=$(sudo grep -oP 'PlexOnlineToken="\K[^"]+' "$HOME/docker/plex-test2/plex/Library/Application Support/Plex Media Server/Preferences.xml")
 
 run() { # name port pid token
   local NAME=$1 PORT=$2 PID=$3 TOK=$4
   echo "########## $NAME (port $PORT, host pid $PID)"
-  local OUT=~/.hermes/cache/scratch/strace-$NAME.log
+  local OUT=$HOME/.hermes/cache/scratch/strace-$NAME.log
   sudo strace -f -p $PID -e trace=openat,open,mmap -o "$OUT" -qq 2>/dev/null &
   local SPID=$!
   sleep 2

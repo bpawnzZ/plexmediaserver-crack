@@ -1,6 +1,6 @@
 # Session 2026-09-30 — NVENC never loads: what was tested and what it proved
 #
-# Host: workstation, GTX 1070 Mobile 10de:1be1, driver 570.153.02
+# Host: this host, GTX 1070 Mobile 10de:1be1, driver 570.153.02
 # prod  plex       1.43.0.10492-121068a07-ls297  port 32400  host net   (Ubuntu 24.04.4)
 # test  plex-test2 1.43.4.10903-e5521bd8c-ls326  port 32403  bridge     (Ubuntu 26.04.1)
 # Both: known-good crack .so md5 4d5dc96c8c7da383d84880b922935cd6
