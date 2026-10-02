@@ -471,34 +471,44 @@ docker exec plex sh -c 'T=$(grep -oP "PlexOnlineToken=\"\K[^\"]+" \
 
 ## 🌍 Remote access without a Plex Pass
 
-Plex's own remote access needs a Plex Pass (or the rate-limited relay). You do
-not need either. Put the server and your clients on a private VPN mesh and reach
-it at its mesh IP — **no port forward, nothing exposed to the internet.**
+Plex's own remote access needs a Plex Pass (or the rate-limited relay). Put the
+server and your clients on a private VPN mesh and reach it at its mesh IP —
+**no port forward, nothing exposed to the internet.**
 
 This works well *because* of the crack, not in spite of it: hardware encoding
 keeps the stream small. A 1080p NVENC stream is roughly 4–8 Mbit/s, which any VPN
 tunnel carries comfortably — where direct-playing a 40 Mbit/s remux would not.
 That headroom is the difference between one remote stream and several.
 
-### Pick your mesh: ZeroTier or WireGuard
+> [!IMPORTANT]
+> **ZeroTier and WireGuard turned out *not* to be equivalent here, contrary to an
+> earlier revision of this file.** ZeroTier is verified working end to end. Over
+> plain WireGuard the server is reachable and Plex's own connection classifier
+> treats the client as **local** — yet the Plex app still demands a Plex Pass to
+> play. That is an unresolved problem. The two explanations this file previously
+> gave for it — "Plex classifies WireGuard clients as remote" and "the DNS layer
+> is what makes it work" — are both **disproven by measurement**. Details in
+> [What the server actually does](#what-the-server-actually-does-measured).
 
-Both work, and after the DNS point below they are **effectively equivalent**.
-The mesh only determines how packets get to the server; it does not change what
-the server does with them.
+### Pick your mesh: ZeroTier or WireGuard
 
 | | ZeroTier / Tailscale | Plain WireGuard |
 |---|---|---|
 | Reach the server at its mesh IP | ✅ | ✅ |
-| Remote playback without a Pass | ✅ | ✅ *(needs the DNS layer below)* |
+| Server classifies the client as local | ✅ | ✅ *(verified in the server log)* |
+| Remote playback without a Pass | ✅ | ⚠️ **still prompts — open** |
 | Setup effort | join network, authorise | configure hub + per-client keys |
 
-What people actually trip over is not the mesh choice — it is **DNS**, which is
-the next section and the one worth reading even if you never touch WireGuard.
+The mesh only decides how packets reach the server. It does not decide whether
+the server calls you local — but it does appear to influence what the **client
+app** concludes about the connection, and that is where the WireGuard case
+currently fails. Do not assume the mesh choice is cosmetic here.
 
-### The DNS layer is what makes it work
+### DNS: a real requirement, but not the reason for the Pass prompt
 
-This is the part that is easy to miss, and the reason a mesh can look broken
-when it is fine.
+Keep this separate from the Pass prompt. Both failures look like "the mesh is
+broken", which is exactly why they get conflated — but fixing DNS does not fix
+the prompt, and the prompt is not evidence of a DNS fault.
 
 **Run your own DNS, and make sure it can resolve and reach hosts on whichever
 VPN network you chose.** That resolver is what turns "reachable by IP" into
@@ -575,24 +585,72 @@ Two gotchas when you apply it:
   docker exec plex cat /etc/resolv.conf   # your new server must be listed
   ```
 
-### Why ZeroTier can *appear* to work without this
+### What the server actually does (measured)
 
-Historically this section claimed WireGuard could not do remote access. That was
-wrong, and the correction is worth recording because the confusion is easy to
-repeat.
+Plex tags every request it handles with the connection class it assigned, in the
+`Plex Media Server.log`. Counted over a single log from the reference server:
 
-ZeroTier has an incidental advantage: the kernel routes its address via **`dev
-lo`**, so Plex sees those requests as **loopback** — and loopback is
-unconditionally local. WireGuard traffic arrives on `wg0` from a subnet Plex does
-not enumerate, so it is classified remote and, with no public port forward,
-falls back to **Plex Relay** — which is a **Plex Pass feature**. That is where
-the Pass prompt comes from.
+| Client | Tag |
+|---|---|
+| LAN client | `(Subnet)` ×2598 |
+| ZeroTier mesh client | `(Subnet)` ×30 |
+| **WireGuard tunnel client** | **`(Subnet)` ×82, `(WAN)` ×0** |
 
-But this is a Plex-classification quirk, not a mesh capability. **Once DNS is
-correct, both meshes behave the same** for reaching the server and playing back
-over it. Do not choose a mesh expecting ZeroTier to hand you something WireGuard
-cannot; fix DNS instead. (An earlier revision of this file claimed WireGuard
-could not do remote access at all — that was wrong, and is corrected here.)
+**Plex already classifies WireGuard clients as local** — the same bucket as LAN
+and mesh clients, not a single `(WAN)` among them. The only `(WAN)` entries in
+that log came from an unrelated internet scanner probing the port, not from Plex
+clients.
+
+That refutes the two explanations this file used to give:
+
+| Previous claim | Status |
+|---|---|
+| "WireGuard traffic arrives from a subnet Plex does not enumerate, so it is classified remote" | ❌ **false** — measured `(Subnet)`, zero `(WAN)` |
+| "ZeroTier works because the kernel routes it via `dev lo`, so Plex sees loopback" | ❌ unsupported — mesh clients are tagged `(Subnet)`, same as everyone else |
+| "The DNS layer is what makes remote playback work" | ❌ DNS governs *name resolution*; it does not control the Pass verdict |
+| "`LanNetworksBandwidth` / `customConnections` fix the prompt" | ❌ both were set on a live server, both reverted — neither changed the outcome |
+
+**What is left.** The server says local and the app still says remote, so the
+verdict that gates playback is being taken somewhere the server log does not
+cover — on the **client**. The leading, still-untested explanation is that the
+Plex app decides from its *own* tunnel interface, and a client whose tunnel
+address carries a bare `/32` has no local subnet containing the server.
+
+This is the one measurement that separates the two cases. Run it from the server
+while a stream from the affected client is playing:
+
+```sh
+docker exec plex sh -c 'T=$(grep -oP "PlexOnlineToken=\"\K[^\"]+" \
+  "/config/Library/Application Support/Plex Media Server/Preferences.xml"); \
+  curl -s "http://127.0.0.1:32400/status/sessions?X-Plex-Token=$T"' \
+  | grep -oE 'local="[01]"|address="[^"]+"'
+```
+
+- `local="1"` **and the prompt still shows** ⇒ the cause is client-side.
+- `local="0"` ⇒ the server gate is the cause after all, and the `(Subnet)` tags
+  above do not mean what they look like.
+
+### The tunnel mask: two knobs, only one of them a trap
+
+These get conflated constantly, and they are unrelated:
+
+| Knob | Set it wide | Why |
+|---|---|---|
+| **`Address`** (interface address + mask) | **safe** | `10.13.13.3/24` merely gives the client a local subnet that contains the server. Nothing on either side breaks. |
+| **`AllowedIPs`** (crypto-routing table) | **trap on the server** | see below |
+
+**The `AllowedIPs` trap — measured, not theorised.** Giving *every* peer the same
+wide range (the linuxserver image's `SERVER_ALLOWEDIPS_PEER_*=<tunnel-subnet>`)
+does **not** build a mesh. WireGuard's kernel resolves overlapping `AllowedIPs`
+across peers by dropping the earlier entries, so once every peer claims the whole
+subnet, `wg show` collapses 19 of 20 peers back to `/32` and **only the last peer
+keeps the range** — and which peer that is can rotate on restart. It happens to
+still work, because the per-peer `/32`s win by longest-prefix match, but the wide
+range is decorative and the ordering is undefined.
+
+The generated **per-peer `/32` table is correct as-is. Leave it alone.** That is
+a different knob from the interface `Address`, and widening the `Address` mask
+does not touch it.
 
 ### ZeroTier setup — verified on this server
 
@@ -687,7 +745,7 @@ signed-in server:
    ```
 
 3. **Does the client resolve names at all?** If not, you are in the DNS problem
-   in [The DNS layer](#the-dns-layer-is-what-makes-it-work) above.
+   in [DNS](#dns-a-real-requirement-but-not-the-reason-for-the-pass-prompt) above.
 
 ---
 
@@ -892,23 +950,6 @@ deployment, and does not fix 1.43.4 either.
   Use Alpine.
 - **Replacing the `.so` needs a container recreate.** The library is loaded at
   process start.
-
----
-
-**Remote access:**
-
-- **Plex's "Remote Access" page will still say unavailable.** It tests the
-  public-internet path via a port forward or Plex's relay, neither of which you
-  are using. The red indicator is expected and means nothing here. Do not go
-  chasing it with a manual port mapping or by enabling the relay.
-- **ZeroTier's own DNS management is inert on a host without systemd-resolved.**
-  It drives `systemd-resolved`, which is not installed on every host, so
-  `allowDNS=1` does nothing there and the network advertises no resolver. On such
-  a host `/etc/resolv.conf` is a plain static file, not a symlink.
-- **Bitrate still matters.** Remote playback that needs more than your tunnel
-  sustains will buffer. Cap the remote quality in the client rather than blaming
-  the GPU — check the `encoder=` line first to confirm the transcode is on the
-  hardware path at all.
 
 ---
 
