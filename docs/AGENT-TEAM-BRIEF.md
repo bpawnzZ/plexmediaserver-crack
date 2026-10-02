@@ -184,10 +184,19 @@ a major win for the project. If no, state precisely what is missing.
 
 ### Task E — sweep for a published 4-hook source (low priority, timeboxed)
 
-Timebox: **30 minutes total.** Upstream `gitgud.io/yuv420p10le/plexmediaserver_crack` → 403;
-`gmh5225/plexmediaserver_crack` GitHub mirror → single commit 2024-05-07. Check archive.org,
-code search engines, mirrors, and forks. Report negative results as results. **Do not let
-this task consume the run** — §4 means it is no longer blocking.
+**RESOLVED — do not re-investigate.** The 4-hook source was found published:
+
+- Upstream `gitgud.io/yuv420p10le/plexmediaserver_crack` **is alive** (`master`, tags
+  v1.3/v1.4/v1.5). It publishes `linux/hook.cpp` (the 4-hook implementation),
+  vendored Zydis source, and `binaries/plexmediaserver_crack.so` — the 9.9 MB
+  known-good build, md5 `4d5dc96c8c7da383d84880b922935cd6`.
+- The earlier "→ 403" note was misleading: only the anonymous **web UI** 403s. The
+  GitLab **API returns 200** and `git ls-remote` works. The repo was never gone.
+- `gmh5225/plexmediaserver_crack` (GitHub) exists but is **source-only — no binaries** —
+  and dormant since 2024-05-12. Not a download source.
+
+Consequence: extending this repo's 2 MB source to 4 hooks is no longer the only route
+to parity — the upstream artifact can simply be downloaded. Task E's search is closed.
 
 ---
 

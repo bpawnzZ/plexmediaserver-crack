@@ -26,7 +26,7 @@ server whose account does not have a Plex Pass.
 > where it stands. If you are on 1.43.4 and hardware transcoding matters to you,
 > **pin to 1.43.0**.
 
-**Contents:** [Agent prompt](#-hand-this-to-your-agent) · [The pin](#-the-pin-read-first) · [Quick start](#-quick-start) · [Remote access](#-remote-access-without-a-plex-pass) · [How it works](#-how-the-crack-works) · [Newer builds](#-cracking-the-newer-builds) · [Gotchas](#-gotchas) · [Contributing](https://github.com/bpawnzZ/plexmediaserver-crack#-get-involved)
+**Contents:** [Agent prompt](#-hand-this-to-your-agent) · [The pin](#-the-pin-read-first) · [Quick start](#-quick-start) · [Remote access](#-remote-access-without-a-plex-pass) · [Building](#-building-the-library) · [How it works](#-how-the-crack-works) · [Newer builds](#-cracking-the-newer-builds) · [Gotchas](#-gotchas) · [Contributing](https://github.com/bpawnzZ/plexmediaserver-crack#-get-involved)
 
 ## 🤖 Hand this to your agent
 
@@ -68,9 +68,13 @@ HARD CONSTRAINTS — do not deviate
   is exposed. Without it NVENC fails.
 - Building this repo's source produces a ~2 MB single-function variant that does
   NOT reproduce the working 9.9 MB Zydis-based deployment — they are different
-  libraries (see the repo README, "There are two different cracks"). If I do not
-  already have a working `.so`, say so — do not hand me a freshly built library
-  as though it were equivalent, and do not report success on that basis.
+  libraries (see the repo README, "There are two different cracks"). Get the real
+  one from upstream instead of building:
+    curl -L -o plex/plexmediaserver_crack.so \
+      https://gitgud.io/yuv420p10le/plexmediaserver_crack/-/raw/master/binaries/plexmediaserver_crack.so
+  Its md5 must be 4d5dc96c8c7da383d84880b922935cd6 (9,972,072 bytes). If the hash
+  differs, stop and tell me. Do not substitute a build of this repo's source and
+  report success on that basis.
 
 If you hit a blocker, ASK. Do not improvise around a constraint above — bumping
 the pinned version, disabling verification, or substituting a different library
@@ -165,20 +169,34 @@ plex/                              # your Plex config dir, mounted at /config
 └── Library/ ...                   # normal Plex config, untouched
 ```
 
-**If you already have a working `.so`** — drop it in, and take a hash so you know
-what you are running:
+**Get the crack library.** Pull the working build straight from upstream — this is
+the Zydis-based library that actually works on 1.43.0, not the smaller variant this
+repo's source builds:
 
 ```sh
+curl -L -o plex/plexmediaserver_crack.so \
+  https://gitgud.io/yuv420p10le/plexmediaserver_crack/-/raw/master/binaries/plexmediaserver_crack.so
 md5sum plex/plexmediaserver_crack.so
+# expect: 4d5dc96c8c7da383d84880b922935cd6  (9,972,072 bytes)
 ```
 
-**If you need to build one** — see [Building the library](#-building-the-library),
-then copy the output and `patchelf` across:
+Check that hash. It is the difference between a working server and one that boots
+fine and silently gives you nothing.
+
+**Get `patchelf`** from your distro — it is a package, not something to build:
 
 ```sh
-cp plexmediaserver_crack.so plex/
 cp "$(command -v patchelf)" plex/
+# Debian/Ubuntu: apt install patchelf    Arch: pacman -S patchelf
 ```
+
+**Or bring your own** — if you already have a known-good `.so`, drop it in and hash
+it so you know what you are running. Just do not substitute a build of this repo's
+source and expect parity; see
+[There are two different cracks](#there-are-two-different-cracks). Building the
+repo's own smaller variant is documented in
+[Building the library](#-building-the-library), but it is not a shortcut to a
+working setup.
 
 > **Both files are required.** `crack_plex.sh` looks for them at
 > `/config/plexmediaserver_crack.so` and `/config/patchelf`. A missing `.so` or a
@@ -744,16 +762,31 @@ the same library:
 The larger, Zydis-based variant is the one that works on 1.43.0 — because it also
 hooks the feature **bitset** (`hook_bitset_init`, `hook_is_user_feature_set`),
 it patches entitlement at a different layer than the single-function variant.
-Its source does not appear to be published: the upstream gitgud repo returns 403
-and the GitHub mirror has been dormant since 2024.
+
+**Upstream publishes both the source and a prebuilt binary**, and it is alive:
+[`yuv420p10le/plexmediaserver_crack`](https://gitgud.io/yuv420p10le/plexmediaserver_crack)
+carries `linux/hook.cpp` (the full 4-hook implementation), the vendored Zydis
+source, and `binaries/plexmediaserver_crack.so` — the 9.9 MB build whose md5 is
+quoted above. Download it from there rather than building this repo's source; see
+step 1.
+
+> Earlier revisions of this README claimed that source "does not appear to be
+> published" because the upstream web UI returns **403** to anonymous requests.
+> That was a misreading: the 403 is a bot-wall on the web front-end only. The
+> GitLab API returns **200** and plain `git ls-remote` works, so the repo, its
+> source, and its binary were reachable the whole time. The `gmh5225/plexmediaserver_crack`
+> GitHub mirror does exist, but it is source-only — no binaries — and has been
+> dormant since 2024.
 
 Rebuilding this repo's smaller variant does **not** reproduce the working
 deployment, and does not fix 1.43.4 either.
 
 ### Open questions
 
-1. Does the **Zydis-based** variant's source exist anywhere public? That variant
-   is what works on 1.43.0 and is the correct starting point.
+1. ~~Does the **Zydis-based** variant's source exist anywhere public?~~ **Answered:
+   yes.** Upstream publishes `linux/hook.cpp` with all four hooks, the Zydis
+   sources it links against, and a prebuilt binary. It is the correct starting
+   point and it is downloadable — see step 1.
 2. What function in 1.43.4 produces the CPU-keyed slot? `is_feature_available` is
    a red herring there.
 3. Is the 1.43.4 behaviour reproducible on other NVIDIA setups **with a genuine
