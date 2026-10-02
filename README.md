@@ -26,7 +26,7 @@ server whose account does not have a Plex Pass.
 > where it stands. If you are on 1.43.4 and hardware transcoding matters to you,
 > **pin to 1.43.0**.
 
-**Contents:** [The pin](#-the-pin-read-first) · [Quick start](#-quick-start) · [Remote access](#-remote-access-without-a-plex-pass) · [How it works](#-how-the-crack-works) · [Newer builds](#-cracking-the-newer-builds) · [Gotchas](#-gotchas) · [Contributing](#-get-involved)
+**Contents:** [The pin](#-the-pin-read-first) · [Quick start](#-quick-start) · [Remote access](#-remote-access-without-a-plex-pass) · [How it works](#-how-the-crack-works) · [Newer builds](#-cracking-the-newer-builds) · [Gotchas](#-gotchas) · [Contributing](https://github.com/bpawnzZ/plexmediaserver-crack#-get-involved)
 
 ---
 
@@ -199,8 +199,12 @@ Executing crack script...
 ⚠️  Running inside container as root
 📦 Running inside Plex container...
 🔧 Applying crack...
+✅ Verifying patch...
 ✅ Crack applied inside container
 ```
+
+The `Verifying patch` step reads `DT_NEEDED` back before claiming success — the
+script will not print the success line unless the library is actually listed.
 
 **Failure modes:**
 
@@ -209,11 +213,14 @@ Executing crack script...
 | `ERROR: crack_plex.sh not found` | the `.:/host-docker:ro` mount is missing |
 | `❌ Crack library not found at /config/plexmediaserver_crack.so` | step 1 not done |
 | `❌ patchelf not found at /config/patchelf` | step 1, `patchelf` half not done |
+| `❌ Failed to add crack library` | patchelf ran but `DT_NEEDED` was not updated — the patch did not take |
 | *(nothing at all about the crack)* | the `entrypoint:` is not set, so it never ran |
 
 > **None of these stop Plex from starting.** The entrypoint does not check the
 > script's exit status, so a failed crack still ends in a running, **unpatched**
-> server. Always confirm with step 5, not just by seeing the container up.
+> server. The script itself no longer claims success unless it verified the
+> patch, but the container comes up either way. Always confirm with step 5, not
+> just by seeing the container up.
 
 **If the crack did not apply, there is usually no error at all** — the library
 fails its signature scan silently and Plex runs unpatched. Turn on debug logging

@@ -110,9 +110,20 @@ else
     ln -sf /config/plexmediaserver_crack.so /usr/lib/plexmediaserver/lib/plexmediaserver_crack.so
     /config/patchelf --remove-needed plexmediaserver_crack.so "/usr/lib/plexmediaserver/lib/libsoci_core.so" 2>/dev/null || true
     /config/patchelf --add-needed plexmediaserver_crack.so "/usr/lib/plexmediaserver/lib/libsoci_core.so"
-    
-    echo "✅ Crack applied inside container"
+
+    # Verify the patch actually took — patchelf can exit 0 and still leave
+    # DT_NEEDED unchanged, and that silent no-op is the failure mode that
+    # matters here. Do not claim success without reading it back.
+    echo "✅ Verifying patch..."
+    if /config/patchelf --print-needed "/usr/lib/plexmediaserver/lib/libsoci_core.so" | grep -q "plexmediaserver_crack.so"; then
+        echo "✅ Crack applied inside container"
+    else
+        echo "❌ Failed to add crack library — libsoci_core.so does not list it"
+        exit 1
+    fi
 fi
 
 echo ""
-echo "📝 For detailed documentation, see: PLEX_CRACK_SETUP.md"
+echo "📝 For detailed documentation, see the README:"
+
+echo "   https://github.com/bpawnzZ/plexmediaserver-crack#-4-start-it-and-check-the-log"
