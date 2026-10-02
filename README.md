@@ -694,6 +694,25 @@ Apply it live without dropping the tunnel, then persist it in the conf:
 sudo wg set wg0 peer <hub-public-key> persistent-keepalive 25
 ```
 
+**Generators get this wrong, so check the template.** The
+`linuxserver/wireguard` image writes **no** `PersistentKeepalive` into client
+configs at all, so every config it produces has this hole — including for peers
+that need it most. Rather than patching each export by hand, add the line to
+`/config/templates/peer.conf`: the image seeds that file **only when it is
+missing**, then generates every peer conf from it, so the fix covers all of them:
+
+```ini
+[Peer]
+PublicKey = $(cat /config/server/publickey-server)
+Endpoint = ${SERVERURL}:${SERVERPORT}
+AllowedIPs = ${ALLOWEDIPS}
+PersistentKeepalive = 25
+```
+
+Two caveats: the template only affects confs generated *after* the change, so
+patch any already-generated configs in place; and regenerating rewrites every
+peer conf, so do not trigger it casually.
+
 Two gotchas that cost real time:
 
 - **Check the runtime, not the file.** `wg show <iface> persistent-keepalive`
