@@ -26,7 +26,91 @@ server whose account does not have a Plex Pass.
 > where it stands. If you are on 1.43.4 and hardware transcoding matters to you,
 > **pin to 1.43.0**.
 
-**Contents:** [The pin](#-the-pin-read-first) · [Quick start](#-quick-start) · [Remote access](#-remote-access-without-a-plex-pass) · [How it works](#-how-the-crack-works) · [Newer builds](#-cracking-the-newer-builds) · [Gotchas](#-gotchas) · [Contributing](https://github.com/bpawnzZ/plexmediaserver-crack#-get-involved)
+**Contents:** [Agent prompt](#-hand-this-to-your-agent) · [The pin](#-the-pin-read-first) · [Quick start](#-quick-start) · [Remote access](#-remote-access-without-a-plex-pass) · [How it works](#-how-the-crack-works) · [Newer builds](#-cracking-the-newer-builds) · [Gotchas](#-gotchas) · [Contributing](https://github.com/bpawnzZ/plexmediaserver-crack#-get-involved)
+
+## 🤖 Hand this to your agent
+
+Paste the block below into your coding agent (Claude Code, Codex, Cursor, …).
+The prompt is self-contained: it carries the pinned version, the gotchas that
+silently produce an unpatched server, and a definition of done. Fill in the three
+paths first.
+
+Working **on this repo** rather than setting it up? Point your agent at
+[`AGENTS.md`](AGENTS.md) instead — it has the build and verify commands, the
+constraints, and the list of dead ends not to re-investigate.
+
+<details>
+<summary><strong>Show the agent prompt</strong></summary>
+
+````text
+Set up plexmediaserver_crack for my Plex Media Server in Docker.
+
+MY CONTEXT
+- Compose file / deploy dir: <absolute path, e.g. /home/me/docker/plex-crypt>
+- Media libraries: <absolute path(s) to bind-mount, e.g. /mnt/media>
+- Crack source: this repo, at <absolute path to this repo>
+
+If any of the above is unknown, ASK ME. Do not guess a path.
+
+BEFORE YOU START — confirm these exist, and stop and tell me if one is missing
+- Docker with `docker compose`
+- An NVIDIA GPU with its driver, and the NVIDIA container runtime (`runtime: nvidia`)
+- `patchelf` available on the host (you will copy it into the Plex config dir)
+
+HARD CONSTRAINTS — do not deviate
+- Pin Plex to 1.43.0.10492-121068a07-ls297. Do NOT use `latest` and do NOT bump
+  the tag: 1.43.4 breaks NVIDIA hardware transcoding independently of the crack.
+- `VERSION=` must equal the pinned version string. Never `VERSION=docker` — that
+  self-updates Plex on boot and silently walks past the pinned tag.
+- The crack library is built against musl. A glibc build will not load into
+  Plex's musl process. Verify with `readelf -d` before shipping it.
+- `runtime: nvidia` is required (not `deploy.resources`), so /dev/dri/renderD128
+  is exposed. Without it NVENC fails.
+- Building this repo's source produces a ~2 MB single-function variant that does
+  NOT reproduce the working 9.9 MB Zydis-based deployment — they are different
+  libraries (see the repo README, "There are two different cracks"). If I do not
+  already have a working `.so`, say so — do not hand me a freshly built library
+  as though it were equivalent, and do not report success on that basis.
+
+If you hit a blocker, ASK. Do not improvise around a constraint above — bumping
+the pinned version, disabling verification, or substituting a different library
+are all worse than stopping.
+
+WHAT TO DO
+1. Read the README's Quick start (steps 1-5), and re-read "The pin (read first)".
+   Consult docs/FINDINGS.md only if verification fails — it is the 1.43.4
+   investigation log, and is not required to stand a working setup up.
+2. Lay out the config dir: `plexmediaserver_crack.so` + `patchelf` inside it.
+3. Copy `examples/plex-entrypoint.sh` and `scripts/crack_plex.sh` next to my
+   compose file; chmod +x both.
+4. Write/update my compose file with: the pinned image, `runtime: nvidia`,
+   `entrypoint: /plex-entrypoint.sh`, `.:/host-docker:ro`, and `./plex:/config`.
+   Preserve my existing volume mounts and PUID/PGID/TZ; only add what is missing.
+5. `docker compose up -d` and read `docker compose logs plex`. Confirm the log
+   shows the driver libs linked AND "✅ Crack applied inside container".
+6. Verify for real: trigger a transcode, then read Plex's decision from its log.
+   Do NOT test by running `Plex Transcoder` directly — it succeeds even on broken
+   builds and gives a false positive.
+
+DEFINITION OF DONE — all three, with the raw output pasted back to me
+a. `docker exec plex /config/patchelf --print-needed \
+      /usr/lib/plexmediaserver/lib/libsoci_core.so` lists plexmediaserver_crack.so
+b. Plex Media Server log shows `Used slots for 10de:<pci-id> ... is now 1`
+   (GPU slot, not `Used slots for CPU`)
+c. Plex Media Server log shows `encoder=h264_nvenc` (not `encoder=libx264`)
+
+REPORTING
+- A running container is NOT proof the crack applied. If any check in (a)-(c)
+  fails, say so explicitly and paste the failing output — do not report success.
+- Tell me every file you created or changed, and the exact commands you ran.
+- If the crack silently no-ops, re-run with `PLEXCRACK_DEBUG=1` and report what
+  `[crack] is_feature_available = ...` printed. If it is 0, the signature scan
+  missed and the hook was not applied.
+````
+
+</details>
+
+---
 
 ---
 
@@ -714,88 +798,6 @@ deployment, and does not fix 1.43.4 either.
   sustains will buffer. Cap the remote quality in the client rather than blaming
   the GPU — check the `encoder=` line first to confirm the transcode is on the
   hardware path at all.
-
----
-
-## 🤖 Hand this to your agent
-
-Paste the block below into your coding agent (Claude Code, Codex, Cursor, …).
-The prompt is self-contained: it carries the pinned version, the gotchas that
-silently produce an unpatched server, and a definition of done. Fill in the three
-paths first.
-
-Working **on this repo** rather than setting it up? Point your agent at
-[`AGENTS.md`](AGENTS.md) instead — it has the build and verify commands, the
-constraints, and the list of dead ends not to re-investigate.
-
-<details>
-<summary><strong>Show the agent prompt</strong></summary>
-
-````text
-Set up plexmediaserver_crack for my Plex Media Server in Docker.
-
-MY CONTEXT
-- Compose file / deploy dir: <absolute path, e.g. /home/me/docker/plex-crypt>
-- Media libraries: <absolute path(s) to bind-mount, e.g. /mnt/media>
-- Crack source: this repo, at <absolute path to this repo>
-
-If any of the above is unknown, ASK ME. Do not guess a path.
-
-BEFORE YOU START — confirm these exist, and stop and tell me if one is missing
-- Docker with `docker compose`
-- An NVIDIA GPU with its driver, and the NVIDIA container runtime (`runtime: nvidia`)
-- `patchelf` available on the host (you will copy it into the Plex config dir)
-
-HARD CONSTRAINTS — do not deviate
-- Pin Plex to 1.43.0.10492-121068a07-ls297. Do NOT use `latest` and do NOT bump
-  the tag: 1.43.4 breaks NVIDIA hardware transcoding independently of the crack.
-- `VERSION=` must equal the pinned version string. Never `VERSION=docker` — that
-  self-updates Plex on boot and silently walks past the pinned tag.
-- The crack library is built against musl. A glibc build will not load into
-  Plex's musl process. Verify with `readelf -d` before shipping it.
-- `runtime: nvidia` is required (not `deploy.resources`), so /dev/dri/renderD128
-  is exposed. Without it NVENC fails.
-- Building this repo's source produces a ~2 MB single-function variant that does
-  NOT reproduce the working 9.9 MB Zydis-based deployment — they are different
-  libraries (see the repo README, "There are two different cracks"). If I do not
-  already have a working `.so`, say so — do not hand me a freshly built library
-  as though it were equivalent, and do not report success on that basis.
-
-If you hit a blocker, ASK. Do not improvise around a constraint above — bumping
-the pinned version, disabling verification, or substituting a different library
-are all worse than stopping.
-
-WHAT TO DO
-1. Read the README's Quick start (steps 1-5), and re-read "The pin (read first)".
-   Consult docs/FINDINGS.md only if verification fails — it is the 1.43.4
-   investigation log, and is not required to stand a working setup up.
-2. Lay out the config dir: `plexmediaserver_crack.so` + `patchelf` inside it.
-3. Copy `examples/plex-entrypoint.sh` and `scripts/crack_plex.sh` next to my
-   compose file; chmod +x both.
-4. Write/update my compose file with: the pinned image, `runtime: nvidia`,
-   `entrypoint: /plex-entrypoint.sh`, `.:/host-docker:ro`, and `./plex:/config`.
-   Preserve my existing volume mounts and PUID/PGID/TZ; only add what is missing.
-5. `docker compose up -d` and read `docker compose logs plex`. Confirm the log
-   shows the driver libs linked AND "✅ Crack applied inside container".
-6. Verify for real: trigger a transcode, then read Plex's decision from its log.
-   Do NOT test by running `Plex Transcoder` directly — it succeeds even on broken
-   builds and gives a false positive.
-
-DEFINITION OF DONE — all three, with the raw output pasted back to me
-a. `docker exec plex /config/patchelf --print-needed \
-      /usr/lib/plexmediaserver/lib/libsoci_core.so` lists plexmediaserver_crack.so
-b. Plex Media Server log shows `Used slots for 10de:<pci-id> ... is now 1`
-   (GPU slot, not `Used slots for CPU`)
-c. Plex Media Server log shows `encoder=h264_nvenc` (not `encoder=libx264`)
-
-REPORTING
-- A running container is NOT proof the crack applied. If any check in (a)-(c)
-  fails, say so explicitly and paste the failing output — do not report success.
-- Tell me every file you created or changed, and the exact commands you ran.
-- If the crack silently no-ops, re-run with `PLEXCRACK_DEBUG=1` and report what
-  `[crack] is_feature_available = ...` printed. If it is 0, the signature scan
-  missed and the hook was not applied.
-````details>
 
 ---
 
