@@ -199,7 +199,7 @@ services:
       - TZ=Etc/UTC
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - VERSION=docker                                    # see the pin below
+      - VERSION=1.43.0.10492-121068a07                      # see the pin below
       # - PLEXCRACK_DEBUG=1                               # uncomment to log the sig scan
 
     volumes:
@@ -454,7 +454,8 @@ the Pass prompt comes from.
 But this is a Plex-classification quirk, not a mesh capability. **Once DNS is
 correct, both meshes behave the same** for reaching the server and playing back
 over it. Do not choose a mesh expecting ZeroTier to hand you something WireGuard
-cannot; fix DNS instead.
+cannot; fix DNS instead. (An earlier revision of this file claimed WireGuard
+could not do remote access at all — that was wrong, and is corrected here.)
 
 ### ZeroTier setup — verified on this server
 
@@ -548,8 +549,8 @@ signed-in server:
    sudo zerotier-cli listnetworks   # ZeroTier
    ```
 
-3. **Does the client resolve names at all?** If not, you have walked into the
-   DNS trap above.
+3. **Does the client resolve names at all?** If not, you are in the DNS problem
+   in [The DNS layer](#the-dns-layer-is-what-makes-it-work) above.
 
 ---
 

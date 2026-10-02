@@ -16,9 +16,10 @@ services:
       - TZ=Etc/UTC
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      # "docker" lets Plex self-update on boot, which silently defeats the image
-      # tag above. Pin it to the same version if the tag is meaningful.
-      - VERSION=docker
+      # Must equal the pinned image tag. "docker" lets Plex self-update on boot,
+      # which silently walks past the tag above and defeats the pin entirely.
+      # Do NOT set this to "docker".
+      - VERSION=1.43.0.10492-121068a07
       # Uncomment to log whether the crack's signature scan matched.
       # - PLEXCRACK_DEBUG=1
 
