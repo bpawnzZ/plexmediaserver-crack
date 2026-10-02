@@ -652,6 +652,46 @@ The generated **per-peer `/32` table is correct as-is. Leave it alone.** That is
 a different knob from the interface `Address`, and widening the `Address` mask
 does not touch it.
 
+### Tunnel MTU: size the clients to the *hub*, not to themselves
+
+A hub-and-spoke failure mode that presents as "the mesh is slow", and worth
+checking before blaming anything else.
+
+WireGuard adds ~60 bytes of overhead (IPv4), so a client's tunnel MTU has to fit
+the **smallest egress link on the path**. In a hub-and-spoke mesh that is the
+**hub's** link, because the hub re-encapsulates traffic it forwards between
+peers:
+
+| Link | MTU | Largest inner packet it can carry |
+|---|---|---|
+| hub `eth0` (egress) | 1400 | 1400 − 60 = **1340** |
+| hub `wg0` | 1320 | sized correctly, 20 bytes of slack |
+| a client `wg0` on the 1420 default | 1420 | **80 bytes too big** |
+
+A packet from peer A to peer C is encapsulated, crosses the hub, and is
+**re-encapsulated** for peer C — and on a 1400-MTU hub that second envelope does
+not fit. WireGuard sets DF, so it is dropped rather than fragmented, and recovery
+depends on ICMP PTB surviving the entire path. When it does not, you get
+connections that stall and then "eventually" load: small requests fine, bulk TLS
+and stream data hanging.
+
+**Fix:** set `MTU` in every client's `[Interface]` to the hub's `wg0` MTU — or
+`1280`, the IPv6-safe floor. Note the linuxserver image sizes the *hub's* `wg0`
+from its `eth0` correctly, but writes **no MTU at all** into client configs, so
+clients silently take the 1420 default.
+
+```ini
+[Interface]
+Address = 10.13.13.3/24
+MTU = 1320
+```
+
+This is the one WireGuard-specific difference that is *not* a Plex quirk: a VPN
+mesh that negotiates its own MTU (ZeroTier, Tailscale) does not hit it, which is
+why the same Plex setup can feel fine on one mesh and broken on the other. It is
+also worth clearing before concluding anything about the Pass prompt — a
+connection that keeps failing can push a client onto a path that *does* prompt.
+
 ### ZeroTier setup — verified on this server
 
 Server side, after joining your network in
