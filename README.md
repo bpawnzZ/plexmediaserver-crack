@@ -110,15 +110,24 @@ WHAT TO DO
    Do NOT test by running `Plex Transcoder` directly — it succeeds even on broken
    builds and gives a false positive.
 
-DEFINITION OF DONE — all three, with the raw output pasted back to me
+DEFINITION OF DONE — all four, with the raw output pasted back to me
 a. `docker exec plex /config/patchelf --print-needed \
       /usr/lib/plexmediaserver/lib/libsoci_core.so` lists plexmediaserver_crack.so
-b. Plex Media Server log shows `Used slots for 10de:<pci-id> ... is now 1`
+b. Plex reports the GPU as its transcoding device. This needs no media, so run it
+   first. Expect `value="10de...` (NVIDIA vendor id; the colons appear as %3a):
+     docker exec plex sh -c 'T=$(grep -oP "PlexOnlineToken=\"\K[^\"]+" \
+       "/config/Library/Application Support/Plex Media Server/Preferences.xml"); \
+       curl -s "http://127.0.0.1:32400/:/prefs?X-Plex-Token=$T"' \
+       | grep -o '<Setting id="HardwareDevicePath"[^/]*/>'
+   An empty value= means the crack is not working — stop and tell me before going
+   further. Do not substitute a direct `Plex Transcoder` run; it always reports
+   nvenc and is a known false positive.
+c. Plex Media Server log shows `Used slots for 10de:<pci-id> ... is now 1`
    (GPU slot, not `Used slots for CPU`)
-c. Plex Media Server log shows `encoder=h264_nvenc` (not `encoder=libx264`)
+d. Plex Media Server log shows `encoder=h264_nvenc` (not `encoder=libx264`)
 
 REPORTING
-- A running container is NOT proof the crack applied. If any check in (a)-(c)
+- A running container is NOT proof the crack applied. If any check in (a)-(d)
   fails, say so explicitly and paste the failing output — do not report success.
 - Tell me every file you created or changed, and the exact commands you ran.
 - If the crack silently no-ops, re-run with `PLEXCRACK_DEBUG=1` and report what
@@ -404,6 +413,61 @@ Replace `<ratingKey>` with any item id from `/library/sections/<n>/all`, wait a
 few seconds, then run the grep above.
 
 ---
+
+### 🖥️ 6. Confirm Plex sees the GPU
+
+Step 5 needs something to play. This check does not — and it is the one that
+populates the **Settings → Transcoder → Hardware transcoding device** dropdown. If
+the dropdown shows your GPU, the crack took.
+
+```sh
+docker exec plex sh -c 'T=$(grep -oP "PlexOnlineToken=\"\K[^\"]+" \
+  "/config/Library/Application Support/Plex Media Server/Preferences.xml"); \
+  curl -s "http://127.0.0.1:32400/:/prefs?X-Plex-Token=$T"' \
+  | grep -o "<Setting id=\"HardwareDevicePath\"[^/]*/>"
+```
+
+Unlike a plain `grep` for the attribute, this reads the whole `<Setting …>` element,
+which is where the useful part lives. On a working setup you get:
+
+```
+<Setting id="HardwareDevicePath" label="Hardware transcoding device" …
+  default="" value="10de%3a1be1%3a1043%3a13f0@0000%3a01%3a00.0"
+  … enumValues=":Auto|10de%3a…:NVIDIA GP104BM [GeForce GTX 1070 Mobile]" />
+```
+
+| What you see | Meaning |
+|---|---|
+| `value="10de…"` plus a real GPU name in `enumValues` | Plex enumerated the GPU and selected it ✅ |
+| `value=""` and `enumValues=":Auto"` only | no device found — crack not working, or GPU not exposed ❌ |
+
+Three things worth reading out of that line:
+
+- **`10de`** is NVIDIA's PCI vendor id, so the prefix confirms the card was found.
+  AMD would be `1002`, Intel `8086`.
+- **`%3a` is URL-encoded `:`** — the value is a URL, not a typo.
+- The device string is the **same one** that appears in the step 5 log line
+  (`Used slots for 10de:1be1:1043:13f0@0000:01:00.0`), so you can cross-check the
+  two. If Plex's `value` and its transcode log name different devices, look again.
+
+The friendly name in `enumValues` is the same string the **Settings → Transcoder**
+dropdown shows, so if you would rather just look, open Plex and check the
+"Hardware transcoding device" list.
+
+Also confirm the flags are on — they default on, but a carried-over
+`Preferences.xml` can have them off:
+
+```sh
+docker exec plex sh -c 'T=$(grep -oP "PlexOnlineToken=\"\K[^\"]+" \
+  "/config/Library/Application Support/Plex Media Server/Preferences.xml"); \
+  curl -s "http://127.0.0.1:32400/:/prefs?X-Plex-Token=$T"' \
+  | grep -oE '<Setting id="HardwareAccelerated(Codecs|Encoders)"[^/]*value="[^"]*"'
+# want value="1" on both
+```
+
+> This proves the *device was selected*, not that a transcode used it. Step 5
+> remains the only proof of the latter — this is a fast pre-check when you have
+> nothing to play.
 
 ## 🌍 Remote access without a Plex Pass
 
