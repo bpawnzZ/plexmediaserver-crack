@@ -714,7 +714,7 @@ deployment, and does not fix 1.43.4 either.
 
 Paste the block below into your coding agent (Claude Code, Codex, Cursor, …).
 The prompt is self-contained: it carries the pinned version, the gotchas that
-silently produce an unpatched server, and a definition of done. Fill in the two
+silently produce an unpatched server, and a definition of done. Fill in the three
 paths first.
 
 Working **on this repo** rather than setting it up? Point your agent at
@@ -732,6 +732,13 @@ MY CONTEXT
 - Media libraries: <absolute path(s) to bind-mount, e.g. /mnt/media>
 - Crack source: this repo, at <absolute path to this repo>
 
+If any of the above is unknown, ASK ME. Do not guess a path.
+
+BEFORE YOU START — confirm these exist, and stop and tell me if one is missing
+- Docker with `docker compose`
+- An NVIDIA GPU with its driver, and the NVIDIA container runtime (`runtime: nvidia`)
+- `patchelf` available on the host (you will copy it into the Plex config dir)
+
 HARD CONSTRAINTS — do not deviate
 - Pin Plex to 1.43.0.10492-121068a07-ls297. Do NOT use `latest` and do NOT bump
   the tag: 1.43.4 breaks NVIDIA hardware transcoding independently of the crack.
@@ -741,11 +748,21 @@ HARD CONSTRAINTS — do not deviate
   Plex's musl process. Verify with `readelf -d` before shipping it.
 - `runtime: nvidia` is required (not `deploy.resources`), so /dev/dri/renderD128
   is exposed. Without it NVENC fails.
+- Building this repo's source produces a ~2 MB single-function variant that does
+  NOT reproduce the working 9.9 MB Zydis-based deployment — they are different
+  libraries (see the repo README, "There are two different cracks"). If I do not
+  already have a working `.so`, say so — do not hand me a freshly built library
+  as though it were equivalent, and do not report success on that basis.
+
+If you hit a blocker, ASK. Do not improvise around a constraint above — bumping
+the pinned version, disabling verification, or substituting a different library
+are all worse than stopping.
 
 WHAT TO DO
-1. Read the README's Quick start (steps 1-5) and docs/FINDINGS.md in full first.
+1. Read the README's Quick start (steps 1-5), and re-read "The pin (read first)".
+   Consult docs/FINDINGS.md only if verification fails — it is the 1.43.4
+   investigation log, and is not required to stand a working setup up.
 2. Lay out the config dir: `plexmediaserver_crack.so` + `patchelf` inside it.
-   Build the .so if I don't already have one — `make` handles the musl build.
 3. Copy `examples/plex-entrypoint.sh` and `scripts/crack_plex.sh` next to my
    compose file; chmod +x both.
 4. Write/update my compose file with: the pinned image, `runtime: nvidia`,
@@ -771,9 +788,7 @@ REPORTING
 - If the crack silently no-ops, re-run with `PLEXCRACK_DEBUG=1` and report what
   `[crack] is_feature_available = ...` printed. If it is 0, the signature scan
   missed and the hook was not applied.
-````
-
-</details>
+````details>
 
 ---
 
