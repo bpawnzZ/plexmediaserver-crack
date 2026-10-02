@@ -7,10 +7,17 @@
 ![build: musl](https://img.shields.io/badge/build-musl_(Alpine)-blue)
 ![license: MIT](https://img.shields.io/badge/license-MIT-lightgrey)
 
-A maintained fork of [`yuv420p10le/plexmediaserver_crack`](https://gitgud.io/yuv420p10le/plexmediaserver_crack)
-/ the [`gmh5225` GitHub mirror](https://github.com/gmh5225/plexmediaserver_crack),
+A maintained fork of [`yuv420p10le/plexmediaserver_crack`](https://gitgud.io/yuv420p10le/plexmediaserver_crack),
 with setup instructions, build tooling, and notes from trying to crack the newer
 Plex builds.
+
+**This fork depends on upstream.** It does not vendor the crack and it is not a
+replacement for it: the working library is built and published *there*, and the
+whole of [step 1](#-1-put-two-files-in-the-plex-config-directory) is fetching it.
+What this repo adds is the part upstream does not cover — a pinned, boot-time
+Docker deployment that survives container recreation, and the
+[1.43.4 investigation](#-cracking-the-newer-builds). See
+[Relationship to upstream](#-relationship-to-upstream).
 
 The crack is a preload library (`plexmediaserver_crack.so`) patched into Plex
 Media Server's `libsoci_core.so` so that Plex's feature-entitlement check always
@@ -26,7 +33,7 @@ server whose account does not have a Plex Pass.
 > where it stands. If you are on 1.43.4 and hardware transcoding matters to you,
 > **pin to 1.43.0**.
 
-**Contents:** [Agent prompt](#-hand-this-to-your-agent) · [The pin](#-the-pin-read-first) · [Quick start](#-quick-start) · [Remote access](#-remote-access-without-a-plex-pass) · [Building](#-building-the-library) · [How it works](#-how-the-crack-works) · [Newer builds](#-cracking-the-newer-builds) · [Gotchas](#-gotchas) · [Contributing](https://github.com/bpawnzZ/plexmediaserver-crack#-get-involved)
+**Contents:** [Agent prompt](#-hand-this-to-your-agent) · [The pin](#-the-pin-read-first) · [Quick start](#-quick-start) · [Remote access](#-remote-access-without-a-plex-pass) · [Building](#-building-the-library) · [How it works](#-how-the-crack-works) · [Newer builds](#-cracking-the-newer-builds) · [Gotchas](#-gotchas) · [Upstream](#-relationship-to-upstream) · [Contributing](https://github.com/bpawnzZ/plexmediaserver-crack#-get-involved)
 
 ## 🤖 Hand this to your agent
 
@@ -66,15 +73,22 @@ HARD CONSTRAINTS — do not deviate
   Plex's musl process. Verify with `readelf -d` before shipping it.
 - `runtime: nvidia` is required (not `deploy.resources`), so /dev/dri/renderD128
   is exposed. Without it NVENC fails.
-- Building this repo's source produces a ~2 MB single-function variant that does
-  NOT reproduce the working 9.9 MB Zydis-based deployment — they are different
-  libraries (see the repo README, "There are two different cracks"). Get the real
-  one from upstream instead of building:
+- This repo does not contain the crack. It depends on upstream at
+  gitgud.io/yuv420p10le/plexmediaserver_crack, which is the only place the
+  prebuilt library is published. Fetch it with exactly this URL:
     curl -L -o plex/plexmediaserver_crack.so \
       https://gitgud.io/yuv420p10le/plexmediaserver_crack/-/raw/master/binaries/plexmediaserver_crack.so
   Its md5 must be 4d5dc96c8c7da383d84880b922935cd6 (9,972,072 bytes). If the hash
-  differs, stop and tell me. Do not substitute a build of this repo's source and
-  report success on that basis.
+  differs, stop and tell me — do not proceed. Note the path is `master`, not `main`.
+- Do NOT fetch the binary from GitHub. The gmh5225 mirror there is source-only with
+  dead links, and github.com/yuv420p10le/... does not exist (404). gitgud only.
+- Do NOT build this repo's source as a substitute. It produces a ~2 MB
+  single-function variant that does NOT reproduce the working 9.9 MB Zydis-based
+  deployment — different libraries (see the repo README, "There are two different
+  cracks"). If the download fails, tell me rather than building something else.
+- Upstream's web UI returns 403 to anonymous requests. That is a bot-wall, not a
+  dead project — the GitLab API returns 200 and git works. Do not conclude the
+  library is unobtainable, and do not go looking for a mirror.
 
 If you hit a blocker, ASK. Do not improvise around a constraint above — bumping
 the pinned version, disabling verification, or substituting a different library
@@ -858,6 +872,46 @@ anything else in this repo. See
 [Cracking the newer builds](#-cracking-the-newer-builds).
 
 ---
+
+## 🔗 Relationship to upstream
+
+Upstream is [`yuv420p10le/plexmediaserver_crack`](https://gitgud.io/yuv420p10le/plexmediaserver_crack)
+on gitgud. It is **the authority on the library** — it builds and publishes the
+crack, and it is where the binary comes from.
+
+| | Upstream | This fork |
+|---|---|---|
+| **The crack library** | authors it | **downloads it** — never vendors or rebuilds it |
+| **Install** | `crack_native.sh` / `crack_docker.sh`, run manually or on a cron | entrypoint applies it **at boot**, survives container recreation |
+| **Pinning** | not addressed | pins Plex `1.43.0` and warns off `1.43.4` |
+| **Version compatibility** | not discussed | the [1.43.4 finding](#-cracking-the-newer-builds), with evidence in [`evidence/`](evidence) |
+| **NVIDIA / LinuxServer wiring** | — | driver-lib linking, `runtime: nvidia`, verified transcode check |
+| **Remote access** | — | [ZeroTier / WireGuard](#-remote-access-without-a-plex-pass) notes |
+| **Agent tooling** | — | [`AGENTS.md`](AGENTS.md) and the [agent prompt](#-hand-this-to-your-agent) |
+
+**Where the binary actually lives.** Upstream's own installers fetch from
+`gitgud.io/yuv420p10le/plexmediaserver_crack`, and that is the only place the
+prebuilt `.so` is published:
+
+```
+https://gitgud.io/yuv420p10le/plexmediaserver_crack/-/raw/master/binaries/plexmediaserver_crack.so
+```
+
+**There is no GitHub equivalent.** A GitHub mirror
+([`gmh5225/plexmediaserver_crack`](https://github.com/gmh5225/plexmediaserver_crack))
+exists, but it is source-only — no `binaries/`, no releases — and has been
+dormant since 2024. Its README points at `github.com/yuv420p10le/...`, which
+returns **404**: those URLs were written before the project moved to gitgud and
+were never updated. Do not fetch from GitHub; it will not work.
+
+Upstream's web UI returns **403** to anonymous requests, which has repeatedly been
+misread as the project being dead. It is not — the GitLab API returns **200** and
+plain `git` works.
+
+**If upstream is ever unreachable,** that is a real outage rather than a reason to
+rebuild from this repo's source: this repo's build produces a *different, smaller*
+library that does not reproduce a working deployment. See
+[There are two different cracks](#there-are-two-different-cracks).
 
 ## 📁 Repo layout
 

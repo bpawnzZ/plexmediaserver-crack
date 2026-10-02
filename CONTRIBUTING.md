@@ -1,9 +1,17 @@
 # Contributing
 
 Thanks for helping. This repo is a documentation-and-tooling fork of
-[`yuv420p10le/plexmediaserver_crack`](https://gitgud.io/yuv420p10le/plexmediaserver_crack)
-(the [`gmh5225` GitHub mirror](https://github.com/gmh5225/plexmediaserver_crack) is
-dormant). Upstream is the authority on the library itself.
+[`yuv420p10le/plexmediaserver_crack`](https://gitgud.io/yuv420p10le/plexmediaserver_crack).
+
+**Upstream is the authority on the library.** It authors and publishes the
+`.so`; this repo downloads it and never vendors or rebuilds it. Changes to how
+the crack *works* belong upstream, not here — see
+[Relationship to upstream](README.md#-relationship-to-upstream) for the split.
+
+Bugs in *this* repo's tooling — the entrypoint, `crack_plex.sh`, the compose
+example, the docs — belong here. The GitHub
+[`gmh5225` mirror](https://github.com/gmh5225/plexmediaserver_crack) is not
+upstream and carries no binaries; do not treat it as an alternative source.
 
 **The most valuable thing you can contribute is a data point.** See
 [Reporting a working configuration](#reporting-a-working-configuration).

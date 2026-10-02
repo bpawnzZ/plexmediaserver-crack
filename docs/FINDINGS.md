@@ -97,7 +97,7 @@ Each of these was tested and is **not** the cause:
 The installed, working crack and the published upstream source are **not the same
 library**:
 
-| | Installed / known-good | Upstream GitHub source |
+| | Installed / known-good | This repo's source |
 |---|---|---|
 | Size | 9.9 MB | ~2 MB |
 | Disassembler | **Zydis** | none |
@@ -106,9 +106,13 @@ library**:
 
 Because the larger variant also hooks the feature **bitset**
 (`hook_bitset_init`, `hook_is_user_feature_set`), it patches entitlement at a
-different layer than the single-function variant. Its source does not appear to
-be published: the upstream gitgud repo returns 403 and the GitHub mirror has been
-inactive since 2024.
+different layer than the single-function variant. **Both its source and a
+prebuilt binary are published upstream** at
+`gitgud.io/yuv420p10le/plexmediaserver_crack` (`linux/hook.cpp` holds all four
+hooks; `binaries/plexmediaserver_crack.so` is the 9.9 MB build, md5
+`4d5dc96c8c7da383d84880b922935cd6`). An earlier revision of this file claimed the
+source was unpublished because the web UI returns 403 to anonymous requests —
+that was a bot-wall, not a dead repo: the GitLab API returns 200 and `git` works.
 
 Rebuilding the small upstream variant and installing it does **not** reproduce
 the working deployment, and does not fix 1.43.4 either.
