@@ -363,27 +363,29 @@ the next section and the one worth reading even if you never touch WireGuard.
 This is the part that is easy to miss, and the reason a mesh can look broken
 when it is fine.
 
-**Run your own DNS, and make sure it can resolve and reach hosts on *both* VPN
-networks.** That single resolver is what ties the meshes into one routing
-domain. The server reaches a client by name resolving to a mesh address, and a
-client reaches the server the same way. Get this right and any mesh works; get
-it wrong and you will blame the VPN.
+**Run your own DNS, and make sure it can resolve and reach hosts on whichever
+VPN network you chose.** That resolver is what turns "reachable by IP" into
+"reachable by name", and it is the layer that ties your mesh together. The
+server reaches a client by name resolving to a mesh address, and a client
+reaches the server the same way. Get this right and either mesh works; get it
+wrong and you will blame the VPN.
 
-In this deployment the resolver is **self-hosted** (pihole, inside a container).
-Two properties matter:
+In this deployment the resolver is **self-hosted** (pihole, inside a container),
+and it answers on the mesh. It happens to sit on two networks here, but one is
+enough — the requirement is only that the resolver is reachable from the network
+you actually use. Two properties matter:
 
-- **It answers on both networks.** A host on either mesh can query it and get
-  addresses back for either mesh.
-- **DNS traffic stays on the internal path.** Queries go to the resolver over
-  the VPN networks only — no lookup leaves for the public internet, so nothing
-  is exposed and there is nothing to leak. (There is a DoH resolver running too,
-  but the clients never touch it directly: they talk to the internal resolver,
-  and that resolver is what talks outward.)
+- **It answers on your VPN network.** Any host on the mesh can query it and get
+  mesh addresses back.
+- **DNS traffic stays on the internal path.** Queries go to the resolver over the
+  VPN only — no lookup leaves for the public internet, so nothing is exposed and
+  there is nothing to leak. (There is a DoH resolver running too, but the clients
+  never touch it directly: they talk to the internal resolver, and that resolver
+  is what talks outward.)
 
-A ZeroTier address is reachable **only over ZeroTier**, and a WireGuard address
-**only over WireGuard** — so the resolver has to sit on both, and the routers
-have to forward between them. Where two meshes meet, that forwarding is
-explicit:
+An address on one mesh is reachable **only over that mesh**, so if you do run
+several, the resolver has to be reachable from each and the router between them
+has to forward. Where two meshes meet, that forwarding is explicit:
 
 ```sh
 # each mesh is a separate interface, and forwarding between them is allowed
@@ -391,9 +393,9 @@ ufw route allow in  on wg0     # wg0 <-> anywhere
 ufw route allow out on wg0
 ```
 
-With `DEFAULT_FORWARD_POLICY="DROP"` those rules are what let a WireGuard
-client's DNS query transit the hub and reach the resolver on the other network.
-Remove them and DNS silently breaks while the tunnel still looks healthy.
+With `DEFAULT_FORWARD_POLICY="DROP"` those rules are what let a client on one
+mesh reach a resolver on the other. Remove them and DNS breaks silently while
+the tunnel still looks healthy.
 
 **The failure mode is deceptive**, which is why this wastes evenings: a
 ZeroTier-only address works perfectly from any host that happens to be on
