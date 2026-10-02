@@ -20,7 +20,7 @@ Click the Plex version to see the reports behind a row.
 
 | Plex | Image tag | GPU | Driver | Crack | Result | Evidence |
 |---|---|---|---|---|---|---|
-| **1.43.4** | `linuxserver/plex:1.43.4.10903-e5521bd8c-ls326` | GTX 1070 (10de:1be1) | 570.153.02 | Zydis variant, 9.9 MB, md5 `4d5dc96c8c7da383d84880b922935cd6` | ❌ `Used slots for CPU` + `encoder=libx264` | [AB run](docs/FINDINGS.md#session-2026-092930--controlled-ab-reproduction-root-cause-isolated), `evidence/AB-decision.txt` |
+| **1.43.4** | `linuxserver/plex:1.43.4.10903-e5521bd8c-ls326` | GTX 1070 (10de:1be1) | 570.153.02 | Zydis variant, 9.9 MB, md5 `4d5dc96c8c7da383d84880b922935cd6` | ❌ `Used slots for CPU` + `encoder=libx264` | [AB run](docs/FINDINGS.md#session-2026-09-2930--controlled-ab-reproduction-root-cause-isolated), `evidence/AB-decision.txt` |
 
 Both the single-function and the Zydis crack fail on 1.43.4 with the **same `.so`**
 that works on 1.43.0. The regression is inside the Plex binary, not the crack.

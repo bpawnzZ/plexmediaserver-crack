@@ -95,7 +95,7 @@ the pinned version, disabling verification, or substituting a different library
 are all worse than stopping.
 
 WHAT TO DO
-1. Read the README's Quick start (steps 1-5), and re-read "The pin (read first)".
+1. Read the README's Quick start (steps 1-6), and re-read "The pin (read first)".
    Consult docs/FINDINGS.md only if verification fails — it is the 1.43.4
    investigation log, and is not required to stand a working setup up.
 2. Lay out the config dir: `plexmediaserver_crack.so` + `patchelf` inside it.
@@ -139,8 +139,6 @@ REPORTING
 
 ---
 
----
-
 ## 📌 The pin (read first)
 
 Two settings must both hold, or the version you tested is **not** the version you
@@ -162,15 +160,15 @@ copy it, you are pinned.
 
 ## 🚀 Quick start
 
-Five steps. Each one leads with the command; the reasoning follows.
+Six steps. Each one leads with the command; the reasoning follows.
 
 ```mermaid
 flowchart LR
-    A["1 · Drop .so<br/>+ patchelf"] --> B["2 · Entrypoint<br/>+ crack script"]
-    B --> C["3 · Compose<br/>+ runtime: nvidia"]
-    C --> D["4 · Boot<br/>+ read log"]
-    D --> E["5 · Verify<br/>h264_nvenc"]
-    E --> F(["🧠 GPU<br/>encoding"])
+    A["1 · .so<br/>+ patchelf"] --> B["2 · entrypoint<br/>+ crack script"]
+    B --> C["3 · compose<br/>+ runtime: nvidia"]
+    C --> D["4 · boot<br/>+ read log"]
+    D --> E["5 · verify<br/>h264_nvenc"]
+    E --> F["6 · GPU<br/>in Plex"]
     style A fill:#1f6feb,color:#fff
     style B fill:#1f6feb,color:#fff
     style C fill:#1f6feb,color:#fff
@@ -486,56 +484,46 @@ That headroom is the difference between one remote stream and several.
 > sometimes demanded a Plex Pass, while ZeroTier worked fine. The cause is
 > **not** Plex classification, **not** DNS, and **not** MTU — it is a **missing
 > `PersistentKeepalive` on the NAT'd peer**, which silently kills the *inbound*
-> direction to that host. See
-> [The one that actually bit us](#the-one-that-actually-bit-us-persistentkeepalive).
-> The explanations this file gave earlier — "Plex classifies WireGuard clients as
-> remote", "the DNS layer is what makes it work", and an MTU mismatch — are kept
-> below only because they were **disproven or shown to be non-causal**, and are
-> worth knowing not to chase again.
+> direction to that host. That is the
+> [one section to read](#the-one-that-actually-bit-us-persistentkeepalive) if you
+> arrive here with a tunnel that looks healthy and an app that will not load.
+>
+> The full investigation — the measurements, the four theories it killed, the DNS
+> failure mode and the MTU cliff — lives in
+> [`docs/remote-access-notes.md`](docs/remote-access-notes.md). This section is
+> the short version.
 
 ### Pick your mesh: ZeroTier or WireGuard
 
 | | ZeroTier / Tailscale | Plain WireGuard |
 |---|---|---|
 | Reach the server at its mesh IP | ✅ | ✅ |
-| Server classifies the client as local | ✅ | ✅ *(verified in the server log)* |
-| Remote playback without a Pass | ✅ | ✅ *(was the symptom of the broken path — confirm on your own setup)* |
+| Server classifies the client as local | ✅ | ✅ *(measured in the server log)* |
+| Remote playback without a Pass | ✅ | ✅ *(once a keepalive is set — see below)* |
 | Setup effort | join network, authorise | configure hub + per-client keys, **and keepalive on every NAT'd peer** |
 
-The mesh only decides how packets reach the server. It does not decide whether
-the server calls you local — but it does appear to influence what the **client
-app** concludes about the connection, and that is where the WireGuard case
-currently fails. Do not assume the mesh choice is cosmetic here.
+The mesh only decides how packets reach the server; it does not decide whether
+the server calls you local. What differs is failure behaviour: ZeroTier and
+Tailscale do their own NAT traversal and keepalive, **plain WireGuard does not** —
+which is the whole reason one mesh works here and the other appears dead.
 
 ### DNS: a real requirement, but not the reason for the Pass prompt
 
-Keep this separate from the Pass prompt. Both failures look like "the mesh is
-broken", which is exactly why they get conflated — but fixing DNS does not fix
-the prompt, and the prompt is not evidence of a DNS fault.
+Keep this separate from playback problems. Both present as "the mesh is broken",
+which is exactly why they get conflated — but fixing DNS does not fix playback,
+and a play problem is not evidence of a DNS fault.
 
-**Run your own DNS, and make sure it can resolve and reach hosts on whichever
-VPN network you chose.** That resolver is what turns "reachable by IP" into
-"reachable by name", and it is the layer that ties your mesh together. The
-server reaches a client by name resolving to a mesh address, and a client
-reaches the server the same way. Get this right and either mesh works; get it
-wrong and you will blame the VPN.
+**Run a resolver your mesh can reach, and use only addresses routable from the
+client's network.** An address on one mesh is reachable *only over that mesh*. A
+WireGuard client's `AllowedIPs` is typically just the tunnel subnet, so a
+mesh-only resolver is unreachable to it and **every lookup fails** — the device
+looks like it has no internet while the tunnel itself is fine. That is the
+deceptive part: a mesh-only address works perfectly from any host that happens to
+be on that mesh, so testing from the wrong machine makes a broken config look
+correct.
 
-In this deployment the resolver is **self-hosted** (pihole, inside a container),
-and it answers on the mesh. It happens to sit on two networks here, but one is
-enough — the requirement is only that the resolver is reachable from the network
-you actually use. Two properties matter:
-
-- **It answers on your VPN network.** Any host on the mesh can query it and get
-  mesh addresses back.
-- **DNS traffic stays on the internal path.** Queries go to the resolver over the
-  VPN only — no lookup leaves for the public internet, so nothing is exposed and
-  there is nothing to leak. (There is a DoH resolver running too, but the clients
-  never touch it directly: they talk to the internal resolver, and that resolver
-  is what talks outward.)
-
-An address on one mesh is reachable **only over that mesh**, so if you do run
-several, the resolver has to be reachable from each and the router between them
-has to forward. Where two meshes meet, that forwarding is explicit:
+If you run several meshes, the router between them has to forward, and that
+forwarding is explicit:
 
 ```sh
 # each mesh is a separate interface, and forwarding between them is allowed
@@ -544,49 +532,38 @@ ufw route allow out on wg0
 ```
 
 With `DEFAULT_FORWARD_POLICY="DROP"` those rules are what let a client on one
-mesh reach a resolver on the other. Remove them and DNS breaks silently while
-the tunnel still looks healthy.
-
-**The failure mode is deceptive**, which is why this wastes evenings: a
-ZeroTier-only address works perfectly from any host that happens to be on
-ZeroTier, so testing from the wrong machine makes a broken config look correct.
+mesh reach a resolver on the other. Remove them and DNS breaks silently while the
+tunnel still looks healthy.
 
 Two real failures, one box:
 
-1. **`PEERDNS=<zerotier-ip>` in the WireGuard hub.** The phone had no route to
+1. **`PEERDNS=<mesh-only-ip>` in the WireGuard hub.** The phone had no route to
    the resolver, so *every* DNS lookup failed and the device looked like it had
-   no internet at all. The tunnel itself was fine.
-2. **`/etc/docker/daemon.json` pinned `"dns": ["<zerotier-ip>"]`** for every
+   no internet at all. The tunnel itself was fine. Fix this at the **template**,
+   not per client — see below.
+2. **`/etc/docker/daemon.json` pinned `"dns": ["<mesh-only-ip>"]`** for every
    container on the host. When that mesh is down, **name resolution inside every
    container dies with it.** Plex is unaffected (it talks to IPs), but anything
    that resolves a hostname is not.
 
-The fix is ordering, not removal — list resolvers so at least one is always
-reachable:
+There is one fix shape for both: make sure at least one listed resolver is
+reachable from where you actually are, and put the intended one first.
 
 ```json
-{ "dns": ["<mesh-resolver-ip>", "<other-resolver-ip>"] }
+{ "dns": ["<mesh-resolver-ip>", "<public-resolver-ip>"] }
 ```
 
-Ordering is a real trade, so choose deliberately:
+One gotcha matters when you apply it: **`systemctl reload docker` does not apply a
+`dns` change.** dockerd logs `Reloaded configuration` while its *effective* config
+still lists the old servers. Restart docker, then verify from *inside* a
+container, not the host — they are different network namespaces:
 
-- **Internal resolver first** — the intended setup: everything resolves through
-  the self-hosted resolver on the mesh, with filtering intact.
-- **A public/secondary resolver second** — a safety net, at the cost of
-  occasionally resolving outside your own DNS.
+```sh
+docker exec plex cat /etc/resolv.conf   # your new server must be listed
+```
 
-Two gotchas when you apply it:
-
-- **`systemctl reload docker` does not apply a `dns` change.** dockerd logs
-  `Reloaded configuration` while its *effective* config still lists the old
-  servers. You need a full `systemctl restart docker`. Containers with a
-  restart policy (`always` / `unless-stopped`) come back on their own.
-- **Verify from inside a container**, not from the host — they are different
-  network namespaces:
-
-  ```sh
-  docker exec plex cat /etc/resolv.conf   # your new server must be listed
-  ```
+Full version, with the self-hosted-resolver setup and the ordering trade-off:
+[`docs/remote-access-notes.md` §6](docs/remote-access-notes.md#6-dns-a-real-requirement-and-a-real-failure-mode).
 
 ### What the server actually does (measured)
 
@@ -613,47 +590,37 @@ That refutes the two explanations this file used to give:
 | "The DNS layer is what makes remote playback work" | ❌ DNS governs *name resolution*; it does not control the Pass verdict |
 | "`LanNetworksBandwidth` / `customConnections` fix the prompt" | ❌ both were set on a live server, both reverted — neither changed the outcome |
 
-**What is left.** The server says local and the app still says remote, so the
-verdict that gates playback is being taken somewhere the server log does not
-cover — on the **client**. The leading, still-untested explanation is that the
-Plex app decides from its *own* tunnel interface, and a client whose tunnel
-address carries a bare `/32` has no local subnet containing the server.
+**What that leaves.** The `(Subnet)` tagging is why the "classified remote → Relay"
+theory had to be abandoned: the server-side verdict was never the problem. The
+prompt turned out to be a *symptom* — a client that cannot hold a working
+connection falls back to the Relay, and the Relay is what prompts — so the real
+fix was the keepalive below, not anything Plex does.
 
-This is the one measurement that separates the two cases. Run it from the server
-while a stream from the affected client is playing:
-
-```sh
-docker exec plex sh -c 'T=$(grep -oP "PlexOnlineToken=\"\K[^\"]+" \
-  "/config/Library/Application Support/Plex Media Server/Preferences.xml"); \
-  curl -s "http://127.0.0.1:32400/status/sessions?X-Plex-Token=$T"' \
-  | grep -oE 'local="[01]"|address="[^"]+"'
-```
-
-- `local="1"` **and the prompt still shows** ⇒ the cause is client-side.
-- `local="0"` ⇒ the server gate is the cause after all, and the `(Subnet)` tags
-  above do not mean what they look like.
+An earlier revision of this file blamed the client's bare `/32` tunnel address for
+the prompt and prescribed a `/status/sessions` check to prove it. That theory is
+superseded and the check is moot on a working setup; both are preserved in
+[`docs/remote-access-notes.md` §4](docs/remote-access-notes.md#4-the-client-side-32-question--superseded)
+in case the question is ever re-opened somewhere it still reproduces.
 
 ### The tunnel mask: two knobs, only one of them a trap
 
 These get conflated constantly, and they are unrelated:
 
-| Knob | Set it wide | Why |
+| Knob | Set it wide? | Why |
 |---|---|---|
-| **`Address`** (interface address + mask) | **safe** | `10.13.13.3/24` merely gives the client a local subnet that contains the server. Nothing on either side breaks. |
+| **`Address`** (interface address + mask) | **safe, but pointless** | Routing is done by `AllowedIPs`, so `/32` — the textbook value for a single-host peer — already reaches everything. A wider mask such as `/24` merely gives the client a local subnet containing the server; nothing breaks either way, and **it was never required here**. Start with `/32`. |
 | **`AllowedIPs`** (crypto-routing table) | **trap on the server** | see below |
 
 **The `AllowedIPs` trap — measured, not theorised.** Giving *every* peer the same
 wide range (the linuxserver image's `SERVER_ALLOWEDIPS_PEER_*=<tunnel-subnet>`)
-does **not** build a mesh. WireGuard's kernel resolves overlapping `AllowedIPs`
-across peers by dropping the earlier entries, so once every peer claims the whole
-subnet, `wg show` collapses 19 of 20 peers back to `/32` and **only the last peer
-keeps the range** — and which peer that is can rotate on restart. It happens to
-still work, because the per-peer `/32`s win by longest-prefix match, but the wide
+does **not** build a mesh: WireGuard resolves overlapping `AllowedIPs` by dropping
+the earlier entries, so `wg show` collapses 19 of 20 peers back to `/32` and only
+the last peer keeps the range — and which peer that is can rotate on restart. It
+still works, because the per-peer `/32`s win by longest-prefix match, but the wide
 range is decorative and the ordering is undefined.
 
-The generated **per-peer `/32` table is correct as-is. Leave it alone.** That is
-a different knob from the interface `Address`, and widening the `Address` mask
-does not touch it.
+The generated **per-peer `/32` table is correct as-is. Leave it alone.** Different
+knob from the interface `Address`; widening the mask does not touch it.
 
 ### The one that actually bit us: `PersistentKeepalive`
 
@@ -730,43 +697,25 @@ work on one mesh and be dead on another — not MTU, not DNS, not classification
 
 ### Tunnel MTU: size the clients to the *hub*, not to themselves
 
-A hub-and-spoke failure mode that presents as "the mesh is slow", and worth
-checking before blaming anything else.
+**Secondary — not the cause of the failure above, but a real failure mode in its
+own right.** A client that comes up on `wg-quick`'s default `MTU 1420` can emit
+packets the hub cannot re-encapsulate to another peer. WireGuard sets DF, so they
+are dropped rather than fragmented: bulk transfers stall while small requests are
+fine. Measured from a client at the default — a 1308-byte packet passes, a
+1328-byte packet fails with `sendmsg: Message too large`.
 
-WireGuard adds ~60 bytes of overhead (IPv4), so a client's tunnel MTU has to fit
-the **smallest egress link on the path**. In a hub-and-spoke mesh that is the
-**hub's** link, because the hub re-encapsulates traffic it forwards between
-peers:
-
-| Link | MTU | Largest inner packet it can carry |
-|---|---|---|
-| hub `eth0` (egress) | 1400 | 1400 − 60 = **1340** |
-| hub `wg0` | 1320 | sized correctly, 20 bytes of slack |
-| a client `wg0` on the 1420 default | 1420 | **80 bytes too big** |
-
-A packet from peer A to peer C is encapsulated, crosses the hub, and is
-**re-encapsulated** for peer C — and on a 1400-MTU hub that second envelope does
-not fit. WireGuard sets DF, so it is dropped rather than fragmented, and recovery
-depends on ICMP PTB surviving the entire path. When it does not, you get
-connections that stall and then "eventually" load: small requests fine, bulk TLS
-and stream data hanging.
-
-**Fix:** set `MTU` in every client's `[Interface]` to the hub's `wg0` MTU — or
-`1280`, the IPv6-safe floor. Note the linuxserver image sizes the *hub's* `wg0`
-from its `eth0` correctly, but writes **no MTU at all** into client configs, so
-clients silently take the 1420 default.
+**Fix** — set the client's MTU to the hub's `wg0` MTU, or `1280` (the IPv6-safe
+floor). The linuxserver image sizes the *hub* correctly but writes **no MTU at
+all** into client configs, so clients silently take the 1420 default:
 
 ```ini
 [Interface]
-Address = 10.13.13.3/24
+Address = 10.13.13.3/32
 MTU = 1320
 ```
 
-This is **not** what caused the symptom above. It was believed to be the cause
-for a while because the arithmetic fits the "stall" pattern neatly — but changing
-the MTU did **not** fix it, and the real cause was the missing keepalive. Keep it
-as config hygiene for a hub whose egress link is smaller than its clients'
-tunnel, and check it when bulk transfers misbehave, but do not start here.
+The arithmetic, the link table and the full PMTU sweep:
+[`docs/remote-access-notes.md` §5](docs/remote-access-notes.md#5-the-two-tunnel-knobs-address-and-allowedips).
 
 ### ZeroTier setup — verified on this server
 
@@ -802,7 +751,7 @@ on Plex's own discovery services.
 included. A browser on a friend's laptop that has not joined the network cannot
 reach `<mesh-ip>` — which is the point.
 
-### What actually has to be in place
+### ZeroTier: what actually has to be in place
 
 | Requirement | Why | Where to set it |
 |---|---|---|
@@ -851,15 +800,22 @@ signed-in server:
    curl http://<tunnel-ip>:32400/identity
    ```
 
-   If that answers, **the network is fine** — the problem is classification, and
-   no amount of Plex preference editing fixes classification.
-2. **Is the client's mesh interface up, and is the handshake current?**
+   If that answers, the network is up and the problem is **not** reachability — so
+   it is not routing, firewall or DNS. It is not classification either: Plex
+   already tags tunnel clients as local, as measured above.
+2. **Is the link healthy in *both* directions, and is a keepalive set?** This is
+   where the failure above actually lived.
 
    ```sh
-   sudo wg show          # WireGuard
-   sudo zerotier-cli listnetworks   # ZeroTier
+   sudo wg show                      # handshake age + persistent-keepalive
+   ping -c3 <server-tunnel-ip>       # client -> server
+   # then from the server, the direction that actually fails:
+   ping -c3 <client-tunnel-ip>
    ```
 
+   `persistent-keepalive: off` on a NAT'd peer is a **fault, not a default**. A
+   one-way failure is its signature — see
+   [the keepalive section](#the-one-that-actually-bit-us-persistentkeepalive).
 3. **Does the client resolve names at all?** If not, you are in the DNS problem
    in [DNS](#dns-a-real-requirement-but-not-the-reason-for-the-pass-prompt) above.
 
