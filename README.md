@@ -481,14 +481,17 @@ tunnel carries comfortably — where direct-playing a 40 Mbit/s remux would not.
 That headroom is the difference between one remote stream and several.
 
 > [!IMPORTANT]
-> **ZeroTier and WireGuard turned out *not* to be equivalent here, contrary to an
-> earlier revision of this file.** ZeroTier is verified working end to end. Over
-> plain WireGuard the server is reachable and Plex's own connection classifier
-> treats the client as **local** — yet the Plex app still demands a Plex Pass to
-> play. That is an unresolved problem. The two explanations this file previously
-> gave for it — "Plex classifies WireGuard clients as remote" and "the DNS layer
-> is what makes it work" — are both **disproven by measurement**. Details in
-> [What the server actually does](#what-the-server-actually-does-measured).
+> **ZeroTier and WireGuard are *not* equivalent, and the reason took a while to
+> find.** The symptom was that Plex would not load at all over WireGuard and
+> sometimes demanded a Plex Pass, while ZeroTier worked fine. The cause is
+> **not** Plex classification, **not** DNS, and **not** MTU — it is a **missing
+> `PersistentKeepalive` on the NAT'd peer**, which silently kills the *inbound*
+> direction to that host. See
+> [The one that actually bit us](#the-one-that-actually-bit-us-persistentkeepalive).
+> The explanations this file gave earlier — "Plex classifies WireGuard clients as
+> remote", "the DNS layer is what makes it work", and an MTU mismatch — are kept
+> below only because they were **disproven or shown to be non-causal**, and are
+> worth knowing not to chase again.
 
 ### Pick your mesh: ZeroTier or WireGuard
 
@@ -496,8 +499,8 @@ That headroom is the difference between one remote stream and several.
 |---|---|---|
 | Reach the server at its mesh IP | ✅ | ✅ |
 | Server classifies the client as local | ✅ | ✅ *(verified in the server log)* |
-| Remote playback without a Pass | ✅ | ⚠️ **still prompts — open** |
-| Setup effort | join network, authorise | configure hub + per-client keys |
+| Remote playback without a Pass | ✅ | ✅ *(was the symptom of the broken path — confirm on your own setup)* |
+| Setup effort | join network, authorise | configure hub + per-client keys, **and keepalive on every NAT'd peer** |
 
 The mesh only decides how packets reach the server. It does not decide whether
 the server calls you local — but it does appear to influence what the **client
@@ -652,6 +655,60 @@ The generated **per-peer `/32` table is correct as-is. Leave it alone.** That is
 a different knob from the interface `Address`, and widening the `Address` mask
 does not touch it.
 
+### The one that actually bit us: `PersistentKeepalive`
+
+If this file has one lesson worth taking, it is this one.
+
+Symptom: **the app will not load at all** over the mesh, while the identical
+setup is fine on ZeroTier. Not slow — nothing. And the tunnel looks healthy by
+every casual check: `wg show` reports a recent handshake and the transfer
+counters are climbing.
+
+Cause: the peer that **sits behind NAT had no `PersistentKeepalive`**. A NAT'd
+peer is only reachable at the endpoint its NAT last saw it use, and that mapping
+expires after roughly 30–120 s of silence. Once it does, every packet the *other*
+peers send toward it is dropped at the hub. The failure is **one-way**, which is
+what makes it so confusing:
+
+| Direction | Result |
+|---|---|
+| NAT'd peer → hub → everyone else | ✅ works (sending is what reopens the mapping) |
+| everyone else → hub → NAT'd peer | ❌ dropped while the mapping is cold |
+
+So a phone can pull hundreds of MB of media *out* of the server while its own
+requests never land — "Plex won't load" behind a tunnel that reports itself
+healthy. The Pass prompt fits here too: a client that cannot hold a working
+direct connection is a client that falls back to the Relay.
+
+**Fix** — on the NAT'd peer:
+
+```ini
+[Peer]
+AllowedIPs = 10.13.13.0/24
+PersistentKeepalive = 25
+```
+
+Apply it live without dropping the tunnel, then persist it in the conf:
+
+```sh
+sudo wg set wg0 peer <hub-public-key> persistent-keepalive 25
+```
+
+Two gotchas that cost real time:
+
+- **Check the runtime, not the file.** `wg show <iface> persistent-keepalive`
+  prints `off` when the line is absent — a conf that *looks* complete can still be
+  missing it, and nothing warns you.
+- **It is invisible in every other diagnostic.** Handshakes look current,
+  counters move, and pings *from* the affected host succeed. Only traffic
+  *toward* it fails. Test each direction separately, and read the application log
+  for the client's source address with timestamps — a client with **zero** logged
+  requests for hours, while data flowed outbound to it, is the tell.
+
+Mesh VPNs that do their own NAT traversal and keepalive (ZeroTier, Tailscale) do
+not have this failure mode at all. That is the real reason the same setup can
+work on one mesh and be dead on another — not MTU, not DNS, not classification.
+
 ### Tunnel MTU: size the clients to the *hub*, not to themselves
 
 A hub-and-spoke failure mode that presents as "the mesh is slow", and worth
@@ -686,11 +743,11 @@ Address = 10.13.13.3/24
 MTU = 1320
 ```
 
-This is the one WireGuard-specific difference that is *not* a Plex quirk: a VPN
-mesh that negotiates its own MTU (ZeroTier, Tailscale) does not hit it, which is
-why the same Plex setup can feel fine on one mesh and broken on the other. It is
-also worth clearing before concluding anything about the Pass prompt — a
-connection that keeps failing can push a client onto a path that *does* prompt.
+This is **not** what caused the symptom above. It was believed to be the cause
+for a while because the arithmetic fits the "stall" pattern neatly — but changing
+the MTU did **not** fix it, and the real cause was the missing keepalive. Keep it
+as config hygiene for a hub whose egress link is smaller than its clients'
+tunnel, and check it when bulk transfers misbehave, but do not start here.
 
 ### ZeroTier setup — verified on this server
 
