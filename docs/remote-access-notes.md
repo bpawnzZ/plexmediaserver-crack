@@ -300,14 +300,38 @@ Two gotchas when you apply it:
 
 ---
 
-## 7. Plex preferences that do not control any of this
+## 7. Plex preferences: one that matters, three that do not
 
-Chasing the Pass prompt through Plex preferences wastes time. Measured, on a
-signed-in server:
+**`LanNetworksBandwidth` — "LAN Networks" — is the explicit allow, and the one
+preference in this area that changes real behaviour.** Plex's own description:
+
+> … networks that will be considered to be on the local network when enforcing
+> bandwidth restrictions. **If left blank, only the server's subnet is considered
+> to be on the local network.**
+
+That default is the entire ZeroTier/WireGuard asymmetry, and it is **not** about the
+client's mask. The server's subnets are whatever its own interfaces say — so a
+ZeroTier client lands inside the wide subnet the server itself is on and counts as
+local, while a WireGuard client does not land inside the server's `wg0` address —
+that address is a `/32`, a single host — and is therefore classed **external**,
+subject to external bandwidth restrictions.
+
+Set both meshes explicitly rather than relying on that accident:
+
+```sh
+curl -s -X PUT -H "X-Plex-Token: $TOK" \
+  "http://127.0.0.1:32400/:/prefs?LanNetworksBandwidth=<lan-subnet>,10.13.13.0/24,<zerotier-subnet>"
+```
+
+Bandwidth classification only — it does not fix reachability and does not suppress
+the Pass prompt. Write it through the API, never by hand-editing `Preferences.xml`
+(Plex rewrites that file itself).
+
+Chasing the Pass prompt through the remaining preferences does waste time. Measured,
+on a signed-in server:
 
 | Setting | Reality |
 |---|---|
-| `LanNetworksBandwidth` | **Bandwidth policy, not the local/remote verdict.** Setting it changes nothing about reachability. |
 | `customConnections` | Publishes a URI to plex.tv, but the client still does not prefer it. |
 | `allowedNetworks` | **Must stay empty.** It grants access **without login**, and only applies when the server is signed *out*. Filling it with a mesh subnet opens **unauthenticated** access to anything on the mesh. |
 | `secureConnections` | `1` means **Preferred** — Plex's enum is inverted (`1:Preferred\|0:Required`). Do not "fix" it to `0`; that is the *stricter* setting and breaks plain-HTTP mesh clients. |

@@ -588,7 +588,7 @@ That refutes the two explanations this file used to give:
 | "WireGuard traffic arrives from a subnet Plex does not enumerate, so it is classified remote" | ❌ **false** — measured `(Subnet)`, zero `(WAN)` |
 | "ZeroTier works because the kernel routes it via `dev lo`, so Plex sees loopback" | ❌ unsupported — mesh clients are tagged `(Subnet)`, same as everyone else |
 | "The DNS layer is what makes remote playback work" | ❌ DNS governs *name resolution*; it does not control the Pass verdict |
-| "`LanNetworksBandwidth` / `customConnections` fix the prompt" | ❌ both were set on a live server, both reverted — neither changed the outcome |
+| "`LanNetworksBandwidth` / `customConnections` fix the prompt" | ❌ both were set on a live server, both reverted — neither changed the outcome. (`LanNetworksBandwidth` is not useless, though: it controls **bandwidth class**, which is a different question — see [Plex settings](#plex-settings-one-that-matters-three-that-do-not).) |
 
 **What that leaves.** The `(Subnet)` tagging is why the "classified remote → Relay"
 theory had to be abandoned: the server-side verdict was never the problem. The
@@ -780,19 +780,50 @@ Leave them off.
   the GPU — check the `encoder=` line first to confirm the transcode is on the
   hardware path at all.
 
-### Plex settings that do *not* control any of this
+### Plex settings: one that matters, three that do not
 
-Chasing the Pass prompt through Plex preferences wastes time. Measured, on a
-signed-in server:
+**`LanNetworksBandwidth` — "LAN Networks" — is the explicit allow, and the one
+preference here that changes real behaviour.** Plex's own description of it:
+
+> … networks that will be considered to be on the local network when enforcing
+> bandwidth restrictions. **If left blank, only the server's subnet is considered
+> to be on the local network.**
+
+That default *is* the ZeroTier/WireGuard asymmetry, and it is not about the client's
+mask. The server's subnets are whatever its own interfaces say — so a ZeroTier client
+lands inside the wide subnet the server itself is on and counts as local, while a
+WireGuard client does **not** land inside the server's `wg0` address — that address
+is a `/32`, a single host — and is therefore treated as **external**, subject to
+external bandwidth restrictions. Same tunnel, same reachability, different class.
+
+Say it explicitly rather than relying on that accident — LAN plus both meshes:
+
+```sh
+# set it live through the API: no restart, and no hand-editing Preferences.xml
+# (Plex rewrites that file itself, so the API is the only safe write path).
+# Comma-separated: your LAN subnet, then each mesh subnet to treat as local.
+curl -s -X PUT -H "X-Plex-Token: $TOK" \
+  "http://127.0.0.1:32400/:/prefs?LanNetworksBandwidth=<lan-subnet>,10.13.13.0/24,<zerotier-subnet>"
+
+# verify against Plex's live value, not the file
+curl -s -H "X-Plex-Token: $TOK" "http://127.0.0.1:32400/:/prefs" \
+  | tr '<' '\n' | grep -o 'id="LanNetworksBandwidth".*value="[^"]*"'
+```
+
+Substitute your own subnets. Note what it does **not** do: it is bandwidth
+classification only, so it neither fixes reachability nor suppresses the Pass prompt.
+But it is why a mesh that "works" can still stream at reduced quality or transcode
+when it had no need to.
+
+The rest, measured on a signed-in server, genuinely do not help:
 
 | Setting | Reality |
 |---|---|
-| `LanNetworksBandwidth` | **Bandwidth policy, not the local/remote verdict.** Setting it changes nothing about reachability. |
 | `customConnections` | Publishes a URI to plex.tv, but the client still does not prefer it. |
 | `allowedNetworks` | **Must stay empty.** It grants access **without login**, and only applies when the server is signed *out*. Filling it with a mesh subnet opens **unauthenticated** access to anything on the mesh. |
 | `secureConnections` | `1` means **Preferred** — Plex's enum is inverted (`1:Preferred\|0:Required`). Do not "fix" it to `0`; that is the *stricter* setting and breaks plain-HTTP mesh clients. |
 
-### Debug order: network first, preferences never
+### Debug order: network first, preferences last
 
 1. **Can the client reach the server at its tunnel IP?**
 
