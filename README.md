@@ -823,6 +823,11 @@ classification only, so it neither fixes reachability nor suppresses the Pass pr
 But it is why a mesh that "works" can still stream at reduced quality or transcode
 when it had no need to.
 
+**Verified on a live WireGuard stream:** the session reported `location="lan"`,
+**direct-played with no transcode at all**, and every request from the tunnel was
+tagged `(Subnet)` with **zero** `(WAN)`. Before this change the same client was
+classed external.
+
 > **Why the tunnel is missing from Settings → Network → Preferred network interface.**
 > Plex only enumerates interfaces that can do LAN broadcast discovery. Its own
 > populated list is literally every `BROADCAST,MULTICAST` interface on the host —
