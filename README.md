@@ -823,6 +823,23 @@ classification only, so it neither fixes reachability nor suppresses the Pass pr
 But it is why a mesh that "works" can still stream at reduced quality or transcode
 when it had no need to.
 
+> **Why the tunnel is missing from Settings → Network → Preferred network interface.**
+> Plex only enumerates interfaces that can do LAN broadcast discovery. Its own
+> populated list is literally every `BROADCAST,MULTICAST` interface on the host —
+> physical, ZeroTier, and all four Docker bridges (even a `NO-CARRIER` one) — and the
+> tunnel is absent because it is `POINTOPOINT,NOARP`. Nothing is broken and the tunnel
+> cannot be added to that dropdown.
+>
+> It also does not need to be. Plex **listens on `*:32400`** — every interface — so
+> tunnel traffic is served either way; the dropdown only chooses which address Plex
+> *advertises*, and **Any** is the widest setting, so leave it. To publish an address
+> on an interface Plex will not enumerate, use `customConnections`, which is exactly
+> what it is for.
+>
+> The useful consequence: because the tunnel can never enter that enumeration, it can
+> never count as "the server's subnet" *by that route* — which is why the CIDR list
+> above, and not the dropdown, is the correct lever for bandwidth class.
+
 The rest, measured on a signed-in server, genuinely do not help:
 
 | Setting | Reality |
