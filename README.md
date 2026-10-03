@@ -611,6 +611,14 @@ These get conflated constantly, and they are unrelated:
 | **`Address`** (interface address + mask) | **safe, but pointless** | Routing is done by `AllowedIPs`, so `/32` — the textbook value for a single-host peer — already reaches everything. A wider mask such as `/24` merely gives the client a local subnet containing the server; nothing breaks either way, and **it was never required here**. Start with `/32`. |
 | **`AllowedIPs`** (crypto-routing table) | **trap on the server** | see below |
 
+One exception, and it is the **server** side rather than the client: widening the
+server's own tunnel interface (`Address = <tunnel-ip>/24` *on the server*) puts every
+mesh client inside the server's subnet — which is precisely what Plex's
+`LanNetworksBandwidth` default keys off. Belt-and-braces next to
+[setting that preference explicitly](#plex-settings-one-that-matters-three-that-do-not):
+the preference is the better lever, because it is explicit and covers every mesh at
+once, but the mask works too and costs one line.
+
 **The `AllowedIPs` trap — measured, not theorised.** Giving *every* peer the same
 wide range (the linuxserver image's `SERVER_ALLOWEDIPS_PEER_*=<tunnel-subnet>`)
 does **not** build a mesh: WireGuard resolves overlapping `AllowedIPs` by dropping
